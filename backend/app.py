@@ -6,7 +6,7 @@ def create_app():
     
     # Import and register blueprints
     # Report
-    from backend.atomic.report.report import report_bp
+    from atomic.report.report import report_bp
     app.register_blueprint(report_bp, url_prefix='/api/reports')
 
     return app
