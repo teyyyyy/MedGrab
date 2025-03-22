@@ -1,5 +1,6 @@
 from flask import Flask
 import os
+from composite.generate_report import generate_report_bp
 
 def create_app():
     app = Flask(__name__)
@@ -15,15 +16,14 @@ def create_app():
         </ul>
         """
     
-    # Import and register blueprints
-    # Report
-    from atomic.report.report import report_bp
-    app.register_blueprint(report_bp, url_prefix='/api/reports')
+    # Import and register blueprints (ONLY COMPOSITE NEEDED)
+    # # Nurse
+    # from atomic.nurse.nurse import nurse_bp
+    # app.register_blueprint(nurse_bp, url_prefix='/api/nurses')
 
-    # Nurse
-    from atomic.nurse.nurse import nurse_bp
-    app.register_blueprint(nurse_bp, url_prefix='/api/nurses')
-
+    # GENERATE REPORT (SCENARIO 3)
+    app.register_blueprint(generate_report_bp, url_prefix='/api/generate-report')
+ 
     return app
 
 if __name__ == '__main__':

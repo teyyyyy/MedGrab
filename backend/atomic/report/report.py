@@ -1,8 +1,11 @@
 from atomic.firestore import db
+from flask import Flask
 from flask import Blueprint, request, jsonify
 from google.cloud import firestore
 
 report_bp = Blueprint('report', __name__)
+
+app = Flask(__name__)
 
 # Store a report
 @report_bp.route('/', methods=['POST'])
@@ -69,4 +72,8 @@ def list_reports(nid):
     
     return jsonify(results)
 
+# Register the blueprint with the URL prefix
+app.register_blueprint(report_bp, url_prefix='/api/reports')
 
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5004) 

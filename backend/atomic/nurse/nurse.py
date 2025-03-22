@@ -1,8 +1,11 @@
 from atomic.firestore import db
+from flask import Flask
 from flask import Blueprint, request, jsonify
 from google.cloud import firestore
 import datetime
 import random
+
+app = Flask(__name__)
 
 nurse_bp = Blueprint('nurse', __name__)
 
@@ -15,6 +18,7 @@ def create_nurse():
     phone_num = data.get('phoneNum')
     available_timing = data.get('availableTiming', [])
     credit_score = data.get('creditScore', 100)  # Default credit score is 100
+    email = data.get('email')
     
     if not all([name, phone_num]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
@@ -28,6 +32,7 @@ def create_nurse():
         'phoneNum': phone_num,
         'availableTiming': available_timing,
         'creditScore': credit_score,
+        'email': email,
         'createdAt': firestore.SERVER_TIMESTAMP
     }
     
@@ -89,7 +94,7 @@ def update_nurse(nid):
         return jsonify({'success': False, 'error': 'Nurse not found'}), 404
     
     # Fields that can be updated
-    updateable_fields = ['name', 'phoneNum', 'availableTiming', 'creditScore']
+    updateable_fields = ['name', 'phoneNum', 'availableTiming', 'creditScore', 'email']
     update_data = {}
     
     for field in updateable_fields:
@@ -134,10 +139,10 @@ def update_credit_score(nid):
     new_score = max(0, min(100, current_score + credit_change))  # Keep score between 0-100
     
     # Update credit score
-    nurse_ref.update({
+    update_data = {
         'creditScore': new_score,
         'updatedAt': firestore.SERVER_TIMESTAMP
-    })
+    }
     
     # Log credit score change
     credit_log_ref = db.collection('creditScoreLogs').document()
@@ -150,26 +155,24 @@ def update_credit_score(nid):
         'timestamp': firestore.SERVER_TIMESTAMP
     })
     
-    # Check if suspension is needed for low credit score (for Scenario 3)
+    # Check if suspension is needed for low credit score
     suspension_threshold = 30  # First warning
     suspension_critical = 20   # Suspension threshold
     
     if new_score <= suspension_critical:
-        # Create a 2-week suspension
-        end_date = datetime.datetime.now() + datetime.timedelta(weeks=2)
+        # Create a 1-month suspension
+        end_date = datetime.datetime.now() + datetime.timedelta(days=30)  # 1 month suspension
         end_date_str = end_date.strftime('%Y-%m-%dT%H:%M+08:00')
         
-        suspension_ref = db.collection('suspensions').document()
-        suspension_ref.set({
-            'NID': nid,
-            'endDate': end_date_str,
-            'reason': 'Credit score dropped below critical threshold',
-            'createdAt': firestore.SERVER_TIMESTAMP
+        # Update nurse's suspension status directly in the nurse document
+        update_data.update({
+            'isSuspended': True,
+            'suspensionEndDate': end_date_str
         })
         
         return jsonify({
             'success': True,
-            'message': 'Credit score updated and nurse suspended',
+            'message': 'Credit score updated and nurse suspended for 1 month',
             'creditScore': new_score,
             'suspended': True,
             'suspensionEndDate': end_date_str
@@ -182,6 +185,9 @@ def update_credit_score(nid):
             'creditScore': new_score,
             'warned': True
         })
+    
+    # Apply updates
+    nurse_ref.update(update_data)
     
     return jsonify({
         'success': True,
@@ -251,27 +257,34 @@ def assign_nurse():
     if location:
         query = query.where('location', '==', location)
     
-    # Get the current date and time to check for suspended nurses
+    # Get the current date and time
     current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M+08:00')
     
     # Execute the query
     available_nurses = []
     for doc in query.stream():
         nurse_data = doc.to_dict()
-        nid = nurse_data.get('NID')
         
         # Check if nurse is suspended
-        is_suspended = False
-        suspensions_ref = db.collection('suspensions')
-        suspension_query = suspensions_ref.where('NID', '==', nid).where('endDate', '>', current_time)
+        is_suspended = nurse_data.get('isSuspended', False)
+        suspension_end_date = nurse_data.get('suspensionEndDate')
         
-        for _ in suspension_query.stream():
-            is_suspended = True
-            break
+        # Skip if nurse is suspended and end date is in the future
+        if is_suspended and suspension_end_date and suspension_end_date > current_time:
+            continue
         
-        # Only include non-suspended nurses
-        if not is_suspended:
-            available_nurses.append(nurse_data)
+        # If suspension has ended, update the nurse document
+        if is_suspended and suspension_end_date and suspension_end_date <= current_time:
+            # Update nurse document to remove suspension
+            db.collection('nurses').document(nurse_data.get('NID')).update({
+                'isSuspended': False,
+                'suspensionEndDate': None
+            })
+            # Include nurse since suspension has ended
+            nurse_data['isSuspended'] = False
+            nurse_data['suspensionEndDate'] = None
+        
+        available_nurses.append(nurse_data)
     
     # Check if any nurses are available
     if not available_nurses:
@@ -333,24 +346,37 @@ def filter_nurses():
 # Check if a nurse is suspended
 @nurse_bp.route('/<nid>/suspension', methods=['GET'])
 def check_suspension(nid):
-    # Get the current date and time
-    current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M+08:00')
+    # Get the nurse document
+    nurse_ref = db.collection('nurses').document(nid)
+    nurse = nurse_ref.get()
     
-    # Check for active suspensions
-    suspensions_ref = db.collection('suspensions')
-    query = suspensions_ref.where('NID', '==', nid).where('endDate', '>', current_time)
+    if not nurse.exists:
+        return jsonify({'success': False, 'error': 'Nurse not found'}), 404
     
-    suspension = None
-    for doc in query.stream():
-        suspension = doc.to_dict()
-        break
+    nurse_data = nurse.to_dict()
+    is_suspended = nurse_data.get('isSuspended', False)
     
-    if suspension:
-        return jsonify({
-            'suspended': True,
-            'endDate': suspension.get('endDate'),
-            'reason': suspension.get('reason')
-        })
+    # If nurse is marked as suspended, check if the suspension period has ended
+    if is_suspended:
+        suspension_end_date = nurse_data.get('suspensionEndDate')
+        
+        if suspension_end_date:
+            current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M+08:00')
+            
+            # If current time is past the suspension end date, update the nurse record
+            if current_time >= suspension_end_date:
+                nurse_ref.update({
+                    'isSuspended': False,
+                    'suspensionEndDate': None
+                })
+                return jsonify({
+                    'suspended': False
+                })
+            
+            return jsonify({
+                'suspended': True,
+                'endDate': suspension_end_date
+            })
     
     return jsonify({
         'suspended': False
@@ -396,11 +422,17 @@ def get_cancellation_stats(nid, year_month):
         'cancellationCount': cancellation_count
     })
 
-# Get nurse work hours for a specific month (for Report Generation - Scenario 3)
-@nurse_bp.route('/<nid>/workhours/<year_month>', methods=['GET'])
-def get_work_hours(nid, year_month):
-    return jsonify({
-        'NID': nid,
-        'yearMonth': year_month,
-        'workHours': 0  # This will be implemented in a composite service
-    })
+# Register the blueprint with the URL prefix
+app.register_blueprint(nurse_bp, url_prefix='/api/nurses')
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5003) 
+
+# # Get nurse work hours for a specific month (for Report Generation - Scenario 3)
+# @nurse_bp.route('/<nid>/workhours/<year_month>', methods=['GET'])
+# def get_work_hours(nid, year_month):
+#     return jsonify({
+#         'NID': nid,
+#         'yearMonth': year_month,
+#         'workHours': 0  # This will be implemented in a composite service
+#     })

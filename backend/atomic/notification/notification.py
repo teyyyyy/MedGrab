@@ -1,21 +1,26 @@
-from flask import Flask, request, jsonify
+from flask import Flask, Blueprint, request, jsonify
 from dotenv import load_dotenv
 import os
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
+from atomic.firestore import db
+import datetime
 
 # Load environment variables
 load_dotenv()
 
+# Initialize Flask and Firestore DB
 app = Flask(__name__)
+notification_bp = Blueprint('notification', __name__)
 
+# Function to send email using SendGrid
 def send_email_notification(to_email, subject, message):
     sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
     
     if not sendgrid_api_key:
         return {"error": "Missing SendGrid API Key"}, 500
     
-    from_email = 'medgrab0@gmail.com'  
+    from_email = 'medgrab0@gmail.com'  # Change to your email address
 
     email_message = Mail(
         from_email=from_email,
@@ -34,7 +39,9 @@ def send_email_notification(to_email, subject, message):
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.route('/send-email', methods=['POST'])
+
+# API endpoint to send email
+@app.route('/api/notifications/send-email', methods=['POST'])
 def send_email():
     data = request.get_json()
     to_email = data.get("to_email")
@@ -44,16 +51,17 @@ def send_email():
     if not to_email or not subject or not message:
         return jsonify({"error": "Missing required fields"}), 400
 
-    result = send_email_notification(to_email, subject, message)
-    return jsonify(result)
+    # Send email
+    email_result = send_email_notification(to_email, subject, message)
+    
+    if email_result.get('status_code') != 202:
+        return jsonify(email_result), 500  # SendGrid email not sent
+
+
+    return jsonify({"message": "Email sent!"}), 200
+
+# Register the blueprint for notifications
+app.register_blueprint(notification_bp)
 
 if __name__ == '__main__':
-    app.run(debug=True)
-
-
-#http://127.0.0.1:5000/send-email 
-# {
-#   "to_email": "recipient@example.com",
-#   "subject": "Hello from Flask",
-#   "message": "<h1>This is an HTML email</h1>"
-# }
+    app.run(debug=True, host='0.0.0.0', port=5002)

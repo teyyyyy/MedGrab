@@ -1,0 +1,28 @@
+services:
+  rabbitmq3:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq3
+    ports:
+      - "5672:5672"  # AMQP port
+      - "15672:15672"  # RabbitMQ management UI port
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - rabbitmq_network
+
+  flask_app:
+    build: .
+    container_name: flask_app
+    ports:
+      - "5001:5001"
+    environment:
+      - AMQP_HOST=rabbitmq3
+    networks:
+      - rabbitmq_network
+
+networks:
+  rabbitmq_network:
+    driver: bridge
