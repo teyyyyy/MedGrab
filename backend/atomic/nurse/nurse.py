@@ -33,6 +33,9 @@ def create_nurse():
         'availableTiming': available_timing,
         'creditScore': credit_score,
         'email': email,
+        'isSuspended': False,
+        'suspensionEndDate': None,
+        'isWarned': False,
         'createdAt': firestore.SERVER_TIMESTAMP
     }
     
@@ -86,6 +89,7 @@ def get_nurse(nid):
 @nurse_bp.route('/<nid>', methods=['PUT'])
 def update_nurse(nid):
     data = request.json
+    print("Received Update Request:", data)
     
     nurse_ref = db.collection('nurses').document(nid)
     nurse = nurse_ref.get()
@@ -94,7 +98,7 @@ def update_nurse(nid):
         return jsonify({'success': False, 'error': 'Nurse not found'}), 404
     
     # Fields that can be updated
-    updateable_fields = ['name', 'phoneNum', 'availableTiming', 'creditScore', 'email']
+    updateable_fields = ['name', 'phoneNum', 'availableTiming', 'creditScore', 'email', 'isSuspended', 'isWarned', 'suspensionEndDate']
     update_data = {}
     
     for field in updateable_fields:
@@ -118,6 +122,7 @@ def update_nurse(nid):
     })
 
 # Update nurse credit score (for Scenario 2)
+# Update credit score (purely update score and log)
 @nurse_bp.route('/<nid>/credit', methods=['PUT'])
 def update_credit_score(nid):
     data = request.json
@@ -155,37 +160,6 @@ def update_credit_score(nid):
         'timestamp': firestore.SERVER_TIMESTAMP
     })
     
-    # Check if suspension is needed for low credit score
-    suspension_threshold = 30  # First warning
-    suspension_critical = 20   # Suspension threshold
-    
-    if new_score <= suspension_critical:
-        # Create a 1-month suspension
-        end_date = datetime.datetime.now() + datetime.timedelta(days=30)  # 1 month suspension
-        end_date_str = end_date.strftime('%Y-%m-%dT%H:%M+08:00')
-        
-        # Update nurse's suspension status directly in the nurse document
-        update_data.update({
-            'isSuspended': True,
-            'suspensionEndDate': end_date_str
-        })
-        
-        return jsonify({
-            'success': True,
-            'message': 'Credit score updated and nurse suspended for 1 month',
-            'creditScore': new_score,
-            'suspended': True,
-            'suspensionEndDate': end_date_str
-        })
-    elif new_score <= suspension_threshold:
-        # Just send a warning
-        return jsonify({
-            'success': True,
-            'message': 'Credit score updated. Warning issued to nurse.',
-            'creditScore': new_score,
-            'warned': True
-        })
-    
     # Apply updates
     nurse_ref.update(update_data)
     
@@ -194,6 +168,66 @@ def update_credit_score(nid):
         'message': 'Credit score updated successfully',
         'creditScore': new_score
     })
+
+# Check and update warning/suspension status
+@nurse_bp.route('/<nid>/check-status', methods=['POST'])
+def check_warning_suspension_status(nid):
+    nurse_ref = db.collection('nurses').document(nid)
+    nurse = nurse_ref.get()
+    
+    if not nurse.exists:
+        return jsonify({'success': False, 'error': 'Nurse not found'}), 404
+    
+    nurse_data = nurse.to_dict()
+    credit_score = nurse_data.get('creditScore', 100)
+    is_warned = nurse_data.get('isWarned', False)
+    is_suspended = nurse_data.get('isSuspended', False)
+    
+    update_data = {}
+    response_data = {
+        'success': True,
+        'creditScore': credit_score,
+        'isWarned': is_warned,
+        'isSuspended': is_suspended
+    }
+    
+    # Warning and suspension logic
+    suspension_threshold = 30  # Warning threshold
+    suspension_critical = 20   # Suspension threshold
+    
+    # Only check for warning/suspension if not already suspended
+    if not is_suspended:
+        if credit_score <= suspension_critical and is_warned:
+            # Credit score below 20 and already warned - suspend the nurse
+            end_date = datetime.datetime.now() + datetime.timedelta(days=30)  # 1 month suspension
+            end_date_str = end_date.strftime('%Y-%m-%dT%H:%M+08:00')
+            
+            update_data.update({
+                'isSuspended': True,
+                'isWarned': False,  # Reset warning flag when suspended
+                'suspensionEndDate': end_date_str
+            })
+            
+            response_data.update({
+                'message': 'Nurse suspended for 1 month',
+                'isWarned': False,
+                'isSuspended': True,
+                'suspensionEndDate': end_date_str
+            })
+        elif credit_score <= suspension_threshold and not is_warned:
+            # Credit score below 30 and not warned - issue warning
+            update_data['isWarned'] = True
+            
+            response_data.update({
+                'message': 'Warning issued to nurse',
+                'isWarned': True
+            })
+    
+    # Apply updates if there are any
+    if update_data:
+        nurse_ref.update(update_data)
+    
+    return jsonify(response_data)
 
 # Get nurse availability timing
 @nurse_bp.route('/<nid>/availability', methods=['GET'])
@@ -355,31 +389,33 @@ def check_suspension(nid):
     
     nurse_data = nurse.to_dict()
     is_suspended = nurse_data.get('isSuspended', False)
+    suspension_end_date = nurse_data.get('suspensionEndDate')
     
-    # If nurse is marked as suspended, check if the suspension period has ended
-    if is_suspended:
-        suspension_end_date = nurse_data.get('suspensionEndDate')
+    # # If nurse is marked as suspended, check if the suspension period has ended
+    # if is_suspended:
+    #     suspension_end_date = nurse_data.get('suspensionEndDate')
         
-        if suspension_end_date:
-            current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M+08:00')
+    #     if suspension_end_date:
+    #         current_time = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M+08:00')
             
-            # If current time is past the suspension end date, update the nurse record
-            if current_time >= suspension_end_date:
-                nurse_ref.update({
-                    'isSuspended': False,
-                    'suspensionEndDate': None
-                })
-                return jsonify({
-                    'suspended': False
-                })
+    #         # If current time is past the suspension end date, update the nurse record
+    #         if current_time >= suspension_end_date:
+    #             nurse_ref.update({
+    #                 'isSuspended': False,
+    #                 'suspensionEndDate': None
+    #             })
+    #             return jsonify({
+    #                 'suspended': False
+    #             })
             
-            return jsonify({
-                'suspended': True,
-                'endDate': suspension_end_date
-            })
+    #         return jsonify({
+    #             'suspended': True,
+    #             'endDate': suspension_end_date
+    #         })
     
     return jsonify({
-        'suspended': False
+        'suspended': is_suspended,
+        'endDate': suspension_end_date
     })
 
 # Get nurse cancel count for a specific month (for Report Generation - Scenario 3)

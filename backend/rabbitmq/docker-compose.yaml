@@ -1,28 +1,50 @@
+version: '3'
+
 services:
-  rabbitmq3:
+  rabbitmq:
     image: rabbitmq:3.12-management
-    container_name: rabbitmq3
+    container_name: medgrab_rabbitmq
     ports:
-      - "5672:5672"  # AMQP port
-      - "15672:15672"  # RabbitMQ management UI port
+      - "5672:5672"
+      - "15672:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=guest
       - RABBITMQ_DEFAULT_PASS=guest
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     networks:
-      - rabbitmq_network
+      - medgrab_network
 
-  flask_app:
-    build: .
-    container_name: flask_app
-    ports:
-      - "5001:5001"
+  notification_service:
+    build:
+      context: ..
+      dockerfile: atomic/notification/notification.Dockerfile
+    container_name: medgrab_notification_service
+    env_file:
+      - ../config/.env
     environment:
-      - AMQP_HOST=rabbitmq3
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NOTIFICATION_ROUTING_KEY=notification.email
+      - NOTIFICATION_QUEUE=email_notifications
+    ports:
+      - "5002:5002"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     networks:
-      - rabbitmq_network
+      - medgrab_network
+
+volumes:
+  rabbitmq_data:
 
 networks:
-  rabbitmq_network:
+  medgrab_network:
     driver: bridge

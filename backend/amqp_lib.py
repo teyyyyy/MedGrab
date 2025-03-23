@@ -40,6 +40,7 @@ async def consume_messages(channel, queue_name, callback):
     # Define what happens when a message is received
     async def on_message(message: aio_pika.abc.AbstractIncomingMessage):
         async with message.process():
+            print(f"Received message: {message.body.decode()}")  # Debug print
             await callback(message)
 
     # Start consuming messages
@@ -58,12 +59,18 @@ async def email_notification_callback(message):
     # Assume the message body contains a JSON string with the email content
     body = message.body.decode()
     notification = json.loads(body)
-
-    # Process the notification (e.g., send an email)
-    print(f"Received notification: {notification}")
+    print(f"Processing notification: {notification}")  # Debug print
     
-    # You can implement email-sending logic here
-    # Example: send_email(notification["to_email"], notification["subject"], notification["message"])
+    # Process the notification (e.g., send an email)
+    to_email = notification.get("to_email")
+    subject = notification.get("subject")
+    message_content = notification.get("message")
+    
+    if to_email and subject and message_content:
+        email_result = send_email_notification(to_email, subject, message_content)
+        print(f"Email result: {email_result}")  # Debug print
+    else:
+        print("Invalid notification format")  # Debug print
 
 
 # Example of usage in your main script

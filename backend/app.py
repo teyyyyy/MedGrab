@@ -23,7 +23,7 @@ def create_app():
 
     # GENERATE REPORT (SCENARIO 3)
     app.register_blueprint(generate_report_bp, url_prefix='/api/generate-report')
- 
+    
     return app
 
 if __name__ == '__main__':

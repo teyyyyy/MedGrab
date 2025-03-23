@@ -1,12 +1,14 @@
-from flask import Flask, request, jsonify, Blueprint
-from ariadne import ObjectType, QueryType, MutationType, gql, make_executable_schema
-from ariadne.asgi import GraphQL
-from ariadne.asgi.handlers import GraphQLHTTPHandler
 import requests
 import datetime
 import os
 from dotenv import load_dotenv
 from rabbitmq.amqp_setup import setup_amqp, send_notification_amqp, close_amqp
+from flask import Flask, request, jsonify, Blueprint
+from ariadne import ObjectType, QueryType, MutationType, gql, make_executable_schema
+from ariadne.asgi import GraphQL
+from asgiref.wsgi import WsgiToAsgi
+from asgiref.sync import async_to_sync
+import asyncio
 
 
 # Load environment variables
@@ -21,61 +23,6 @@ REPORT_SERVICE_URL='http://127.0.0.1:5004/api/reports'
 
 generate_report_bp = Blueprint('generate_report', __name__)
 
-# Define GraphQL schema
-type_defs = gql("""
-    type Query {
-        nurseMonthlyReport(nid: String!, month: String!): MonthlyReport
-        listNurseReports(nid: String!): [ReportSummary]
-    }
-    
-    type Mutation {
-        generateMonthlyReport(nid: String!, month: String!): ReportResult
-        checkCreditScore(nid: String!): CreditScoreResult
-    }
-    
-    type MonthlyReport {
-        nid: String!
-        month: String!
-        totalBookings: Int!
-        completedBookings: Int!
-        cancelledBookings: Int!
-        cancellationRate: Float!
-        totalHoursWorked: Float!
-        averageSessionDuration: Float!
-        creditScore: Int!
-        isWarned: Boolean!
-        isSuspended: Boolean!
-        suspensionEndDate: String
-        reportLink: String
-    }
-    
-    type ReportSummary {
-        rid: String!
-        month: String!
-        reportLink: String!
-    }
-    
-    type ReportResult {
-        success: Boolean!
-        reportId: String
-        reportLink: String
-        message: String!
-    }
-    
-    type CreditScoreResult {
-        success: Boolean!
-        nid: String!
-        creditScore: Int!
-        isWarned: Boolean!
-        isSuspended: Boolean!
-        suspensionEndDate: String
-        message: String!
-    }
-""")
-
-# Initialize types
-query = QueryType()
-mutation = MutationType()
 
 # Helper functions
 def get_nurse_details(nid):
@@ -93,7 +40,7 @@ def get_nurse_details(nid):
         return None
     
 nurse_id_mapping = {
-    "4mZMSorpJygyYqgKEbCd": 123,  # Example mapping
+    "tEYZYaO84tjdjkDrOdym": 123,  # Example mapping
     # Add more mappings as needed
 }
 
@@ -265,6 +212,18 @@ def check_suspension_status(nid):
     except requests.RequestException:
         return False, None
 
+def format_date(date_str):
+    """Format ISO date string to a more readable format (DD-MM-YYYY HH:MM)"""
+    if not date_str:
+        return "N/A"
+    try:
+        # Parse the ISO date string
+        dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        # Format it in a more readable way
+        return dt.strftime('%d-%m-%Y %H:%M')
+    except (ValueError, TypeError):
+        return date_str
+
 def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
     """Generate the HTML report content"""
     year, month = month_str.split('-')
@@ -278,8 +237,9 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
     avg_session = hours_worked / completed_bookings if completed_bookings > 0 else 0
     
     credit_score = nurse_data.get('creditScore', 100)
-    is_warned = credit_score <= 30
-    is_suspended = credit_score <= 20
+    is_warned = nurse_data.get('isWarned', False)
+    is_suspended = nurse_data.get('isSuspended', False)
+    suspension_end_date = format_date(nurse_data.get('suspensionEndDate'))
     
     html_content = f"""
     <html>
@@ -321,8 +281,9 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
         
         {'''<div class="warning">
             <h3>🚫 Account Suspension</h3>
-            <p>Your account has been suspended for 2 weeks due to low credit score.</p>
+            <p>Your account has been suspended for 1 month due to low credit score.</p>
             <p>During this period, you will not be shown in the nurse pool for new bookings.</p>
+            <p>Suspension end date: {suspension_end_date}</p>
         </div>''' if is_suspended else ''}
         
         <h2>Detailed Activity</h2>
@@ -361,117 +322,22 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
     
     return html_content
 
-# Define query resolvers
-@query.field("nurseMonthlyReport")
-async def resolve_nurse_monthly_report(_, info, nid, month):
-    # First check if report already exists
-    existing_report = get_stored_report(nid, month)
-    if existing_report:
-        # Return the existing report data
-        nurse_data = get_nurse_details(nid)
-        is_suspended, suspension_end = check_suspension_status(nid)
-        
-        year, month_num = month.split('-')
-        bookings = get_bookings_for_month(nid, int(year), int(month_num))
-        hours_worked, completed = calculate_hours_worked(bookings)
-        
-        return {
-            "nid": nid,
-            "month": month,
-            "totalBookings": len(bookings),
-            "completedBookings": len(completed),
-            "cancelledBookings": sum(1 for b in bookings if b.get('Status') == 'Cancelled'),
-            "cancellationRate": (sum(1 for b in bookings if b.get('Status') == 'Cancelled') / len(bookings) * 100) if len(bookings) > 0 else 0,
-            "totalHoursWorked": hours_worked,
-            "averageSessionDuration": hours_worked / len(completed) if len(completed) > 0 else 0,
-            "creditScore": nurse_data.get('creditScore', 100) if nurse_data else 0,
-            "isWarned": nurse_data.get('creditScore', 100) <= 30 if nurse_data else False,
-            "isSuspended": is_suspended,
-            "suspensionEndDate": suspension_end,
-            "reportLink": existing_report.get('reportLink')
-        }
-    
-    # Otherwise, generate a new report
-    result = await _generate_monthly_report(nid, month)
-    
-    if not result.get('success'):
+def check_nurse_status(nid):
+    """Check and update nurse warning/suspension status"""
+    try:
+        response = requests.post(f"{NURSE_SERVICE_URL}/{nid}/check-status")
+        return response.json() if response.status_code == 200 else None
+    except requests.RequestException as e:
+        print(f"Error checking nurse status: {e}")
         return None
-    
-    # Get report data
-    year, month_num = month.split('-')
-    nurse_data = get_nurse_details(nid)
-    bookings = get_bookings_for_month(nid, int(year), int(month_num))
-    hours_worked, completed = calculate_hours_worked(bookings)
-    is_suspended, suspension_end = check_suspension_status(nid)
-    
-    return {
-        "nid": nid,
-        "month": month,
-        "totalBookings": len(bookings),
-        "completedBookings": len(completed),
-        "cancelledBookings": sum(1 for b in bookings if b.get('Status') == 'Cancelled'),
-        "cancellationRate": (sum(1 for b in bookings if b.get('Status') == 'Cancelled') / len(bookings) * 100) if len(bookings) > 0 else 0,
-        "totalHoursWorked": hours_worked,
-        "averageSessionDuration": hours_worked / len(completed) if len(completed) > 0 else 0,
-        "creditScore": nurse_data.get('creditScore', 100) if nurse_data else 0,
-        "isWarned": nurse_data.get('creditScore', 100) <= 30 if nurse_data else False, 
-        "isSuspended": is_suspended,
-        "suspensionEndDate": suspension_end,
-        "reportLink": result.get('reportLink')
-    }
 
-@query.field("listNurseReports")
-def resolve_list_nurse_reports(_, info, nid):
-    reports = list_nurse_reports(nid)
-    
-    result = []
-    for report in reports:
-        result.append({
-            "rid": report.get('RID'),
-            "month": report.get('reportMonth'),
-            "reportLink": report.get('reportLink')
-        })
-    
-    return result
-
-# Define mutation resolvers
-@mutation.field("generateMonthlyReport")
-async def resolve_generate_monthly_report(_, info, nid, month):
-    return await _generate_monthly_report(nid, month)
-
-async def send_consolidated_notification_amqp(nurse_email, nurse_name, report_link, hours_worked, cancelled_bookings, cancellation_rate, credit_score):
-    """Send a single, consolidated email with all relevant details via AMQP."""
-    subject = f"Your MedGrab Monthly Report - {datetime.datetime.now().strftime('%B %Y')}"
-    
-    message = f"""
-    <html>
-    <body>
-        <p>Hi {nurse_name},</p>
-        <p>Your monthly activity report is now available. <a href='{report_link}'>View your report here</a>.</p>
-        <hr>
-        <h3>Summary:</h3>
-        <ul>
-            <li><strong>Total Hours Worked:</strong> {hours_worked:.1f} hours</li>
-            <li><strong>Cancelled Bookings:</strong> {cancelled_bookings} ({cancellation_rate:.1f}% cancellation rate)</li>
-            <li><strong>Current Credit Score:</strong> {credit_score}</li>
-        </ul>
-        
-        {'<p style="color:red;"><strong>⚠️ High Workload Warning:</strong> You have worked over 60 hours this month. Please take care of your well-being.</p>' if hours_worked > 60 else ''}
-        {'<p style="color:red;"><strong>⚠️ High Cancellation Rate:</strong> Your cancellation rate exceeds 30%. This affects your reliability score.</p>' if cancellation_rate > 30 else ''}
-        {'<p style="color:red;"><strong>🚫 Account Suspension Notice:</strong> Your credit score is critically low, and your account may be suspended.</p>' if credit_score <= 20 else ''}
-        
-        <p>Thank you for your service.</p>
-        <p>Best Regards,<br>MedGrab Team</p>
-    </body>
-    </html>
-    """
-    
-    await send_notification_amqp(nurse_email, subject, message)
-
-# Modify _generate_monthly_report to use this function
+# Core function to generate a monthly report
 async def _generate_monthly_report(nid, month):
+    print(f"Starting report generation for nurse {nid}, month {month}")
     nurse_data = get_nurse_details(nid)
+    print(f"Nurse data retrieved: {nurse_data is not None}")
     if not nurse_data:
+        print(f"Nurse not found with ID: {nid}")
         return {"success": False, "message": "Nurse not found"}
     
     nurse_email = nurse_data.get('email')
@@ -479,9 +345,38 @@ async def _generate_monthly_report(nid, month):
     year, month_num = map(int, month.split('-'))
     bookings = get_bookings_for_month(nid, year, month_num)
     hours_worked, _ = calculate_hours_worked(bookings)
-    cancelled_bookings = sum(1 for b in bookings if b.get('Status') == 'Cancelled')
-    cancellation_rate = (cancelled_bookings / len(bookings) * 100) if bookings else 0
-    credit_score = nurse_data.get('creditScore', 100)
+    cancelled_bookings = sum(1 for b in bookings if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled')
+    total_bookings = len(bookings) if bookings else 0
+    cancellation_rate = (cancelled_bookings / total_bookings * 100) if total_bookings > 0 else 0
+    
+    # Simplified suspension logic:
+    # If nurse is suspended, automatically reset suspension and credit score
+    if nurse_data.get('isSuspended', False):
+        # Update nurse document to remove suspension and reset credit score to 50
+        try:
+            response = requests.put(f"{NURSE_SERVICE_URL}/{nid}", json={
+                'isSuspended': False,
+                'suspensionEndDate': None,
+                'creditScore': 50  # Reset credit score to 50 after suspension
+            })
+            if response.status_code == 200:
+                nurse_data['isSuspended'] = False
+                nurse_data['suspensionEndDate'] = None
+                nurse_data['creditScore'] = 50
+                print(f"Suspension reset for nurse {nid} during monthly report generation")
+        except requests.RequestException as e:
+            print(f"Error resetting suspension status: {e}")
+    else:
+        # Only check for warning/suspension if not already suspended
+        status_result = check_nurse_status(nid)
+        if status_result and status_result.get('success'):
+            is_warned = status_result.get('isWarned', False)
+            is_suspended = status_result.get('isSuspended', False)
+            suspension_end_date = status_result.get('suspensionEndDate')
+            nurse_data['isWarned'] = is_warned
+            nurse_data['isSuspended'] = is_suspended
+            nurse_data['suspensionEndDate'] = suspension_end_date
+    
     
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
     report_link = f"/reports/{nid}/{month}.html"
@@ -489,102 +384,67 @@ async def _generate_monthly_report(nid, month):
     
     if nurse_email:
         # Use AMQP to send notification asynchronously
-        await send_consolidated_notification_amqp(
-            nurse_email, 
-            nurse_name, 
-            report_link, 
-            hours_worked, 
-            cancelled_bookings, 
-            cancellation_rate, 
-            credit_score
-        )
+        subject = f"Your MedGrab Monthly Report - {datetime.datetime.now().strftime('%B %Y')}"
+        
+        # Format suspension end date for email
+        formatted_suspension_end = format_date(nurse_data.get('suspensionEndDate'))
+        
+        # Create warning and suspension messages based on status
+        warning_message = ""
+        if nurse_data.get('isWarned', False) and not nurse_data.get('isSuspended', False):
+            warning_message = """
+            <div style="margin-top: 20px; padding: 10px; background-color: #fff3cd; border-left: 5px solid #ffc107; color: #856404;">
+                <h3 style="margin-top: 0;">⚠️ Credit Score Warning</h3>
+                <p>Your credit score has dropped to {credit_score}, which is below our warning threshold of 30.</p>
+                <p>Please be careful about cancellations to avoid account suspension. If your score drops below 20, 
+                your account will be automatically suspended for 30 days.</p>
+            </div>
+            """.format(credit_score=nurse_data.get('creditScore', 0))
+            
+        suspension_message = ""
+        if nurse_data.get('isSuspended', False) and nurse_data.get('suspensionEndDate'):
+            suspension_message = """
+            <div style="margin-top: 20px; padding: 10px; background-color: #f8d7da; border-left: 5px solid #dc3545; color: #721c24;">
+                <h3 style="margin-top: 0;">🚫 Account Suspension Notice</h3>
+                <p>Due to your credit score falling below the critical threshold of 20, your account has been suspended until {suspension_end}.</p>
+                <p>During this period, you will not be shown in the nurse pool for new bookings.</p>
+                <p>After your suspension ends, please maintain a good credit score to avoid future suspensions.</p>
+            </div>
+            """.format(suspension_end=formatted_suspension_end)
+        
+        # Combine everything into a single email
+        message = f"""
+        <html>
+        <body>
+            <p>Hi {nurse_name},</p>
+            <p>Your monthly activity report is now available. <a href='{report_link}'>View your report here</a>.</p>
+            <hr>
+            <h3>Summary:</h3>
+            <ul>
+                <li><strong>Total Hours Worked:</strong> {hours_worked:.1f} hours</li>
+                <li><strong>Cancelled Bookings:</strong> {cancelled_bookings} ({cancellation_rate:.1f}% cancellation rate)</li>
+                <li><strong>Current Credit Score:</strong> {nurse_data.get('creditScore', 100)}</li>
+            </ul>
+            
+            {'<p style="color:red;"><strong>⚠️ High Workload Warning:</strong> You have worked over 60 hours this month. Please take care of your well-being.</p>' if hours_worked > 60 else ''}
+            {'<p style="color:red;"><strong>⚠️ High Cancellation Rate:</strong> Your cancellation rate exceeds 30%. This affects your reliability score.</p>' if cancellation_rate > 30 else ''}
+            
+            {warning_message}
+            {suspension_message}
+            
+            <p>Thank you for your service.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+        
+        notification_result = await send_notification_amqp(nurse_email, subject, message)
+        print(f"Notification result: {notification_result}")
     
+    print(f"Report generation completed successfully: {report_link}")
     return {"success": True, "reportLink": report_link, "message": "Report generated and email queued for delivery."}
 
-@mutation.field("checkCreditScore")
-async def resolve_check_credit_score(_, info, nid):
-    # Get nurse details
-    nurse_data = get_nurse_details(nid)
-    if not nurse_data:
-        return {
-            "success": False,
-            "nid": nid,
-            "creditScore": 0,
-            "isWarned": False,
-            "isSuspended": False,
-            "message": "Nurse not found"
-        }
-    
-    credit_score = nurse_data.get('creditScore', 100)
-    nurse_email = nurse_data.get('email')
-    nurse_name = nurse_data.get('name')
-    
-    is_warned = credit_score <= 30
-    is_suspended = credit_score <= 20
-    suspension_end_date = None
-    
-    # Check if already suspended
-    current_suspension, end_date = check_suspension_status(nid)
-    if current_suspension:
-        return {
-            "success": True,
-            "nid": nid,
-            "creditScore": credit_score,
-            "isWarned": True,
-            "isSuspended": True,
-            "suspensionEndDate": end_date,
-            "message": "Nurse is already suspended"
-        }
-    
-    # Handle warning
-    if is_warned and not is_suspended and nurse_email:
-        await send_notification_amqp(
-            nurse_email,
-            "Credit Score Warning",
-            f"Hi {nurse_name}, your credit score has dropped to {credit_score}. " +
-            "Please be careful about cancellations to avoid suspension."
-        )
-    
-    # Handle suspension
-    if is_suspended and nurse_email:
-        # Credit score reached suspension threshold
-        # The update_credit_score function in nurse.py will handle the suspension creation
-        score_update = update_credit_score(nid, 0, "System suspension check")
-        
-        if score_update and score_update.get('suspended'):
-            suspension_end_date = score_update.get('suspensionEndDate')
-            
-            await send_notification_amqp(
-                nurse_email,
-                "Account Suspension Notice",
-                f"Hi {nurse_name}, due to your credit score falling below the critical threshold, " +
-                f"your account has been suspended until {suspension_end_date}. " +
-                "During this period, you will not be shown in the nurse pool for new bookings."
-            )
-    
-    return {
-        "success": True,
-        "nid": nid,
-        "creditScore": credit_score,
-        "isWarned": is_warned,
-        "isSuspended": is_suspended,
-        "suspensionEndDate": suspension_end_date,
-        "message": "Credit score checked successfully"
-    }
-
-# Create executable schema
-schema = make_executable_schema(type_defs, query, mutation)
-
-# Create GraphQL application
-graphql_app = GraphQL(
-    schema,
-    debug=True,
-)
-
-@generate_report_bp.route("/graphql", methods=["GET", "POST"])
-async def graphql_handler():
-    return await graphql_app.handle_request(request)
-
+# REST endpoints only
 @generate_report_bp.route("/generate/<nid>/<month>", methods=["POST"])
 async def generate_report_rest(nid, month):
     try:
@@ -594,8 +454,16 @@ async def generate_report_rest(nid, month):
         print(f"Error in generate_report_rest: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
-@generate_report_bp.route("/nurses/<nid>/check-credit", methods=["POST"])
-async def check_credit_rest(nid):
-    result = await resolve_check_credit_score(None, None, nid)
-    return jsonify(result)
+@generate_report_bp.route("/report/<nid>/<month>", methods=["GET"])
+def get_report(nid, month):
+    """Get report data for a specific month"""
+    existing_report = get_stored_report(nid, month)
+    if existing_report:
+        return jsonify(existing_report)
+    return jsonify({"success": False, "message": "Report not found"}), 404
 
+@generate_report_bp.route("/reports/<nid>", methods=["GET"])
+def get_nurse_reports(nid):
+    """Get all reports for a nurse"""
+    reports = list_nurse_reports(nid)
+    return jsonify(reports)
