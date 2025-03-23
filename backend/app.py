@@ -13,6 +13,7 @@ def create_app():
         <ul>
             <li><a href="/api/nurses/">/api/nurses/</a> - Nurse service</li>
             <li><a href="/api/reports/">/api/reports/</a> - Report service</li>
+            <li><a href="/api/generate-report/graphql">/api/generate-report/graphql</a> - Report Generation GraphQL</li>
         </ul>
         """
     
