@@ -163,26 +163,6 @@ def store_report(nid, report_month, report_content, report_link):
     except requests.RequestException:
         return None
 
-def get_stored_report(nid, month):
-    """Get stored report from the report service"""
-    try:
-        response = requests.get(f"{REPORT_SERVICE_URL}/{nid}/{month}")
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except requests.RequestException:
-        return None
-
-def list_nurse_reports(nid):
-    """List all reports for a nurse"""
-    try:
-        response = requests.get(f"{REPORT_SERVICE_URL}/{nid}")
-        if response.status_code == 200:
-            return response.json()
-        return []
-    except requests.RequestException:
-        return []
-
 def check_suspension_status(nid):
     """Check if a nurse is currently suspended"""
     try:
@@ -454,16 +434,3 @@ async def generate_report_rest(nid, month):
         print(f"Error in generate_report_rest: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
-@generate_report_bp.route("/report/<nid>/<month>", methods=["GET"])
-def get_report(nid, month):
-    """Get report data for a specific month"""
-    existing_report = get_stored_report(nid, month)
-    if existing_report:
-        return jsonify(existing_report)
-    return jsonify({"success": False, "message": "Report not found"}), 404
-
-@generate_report_bp.route("/reports/<nid>", methods=["GET"])
-def get_nurse_reports(nid):
-    """Get all reports for a nurse"""
-    reports = list_nurse_reports(nid)
-    return jsonify(reports)
