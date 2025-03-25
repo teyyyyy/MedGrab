@@ -1,7 +1,7 @@
-from atomic.firestore import db
 from flask import Flask
 from flask import Blueprint, request, jsonify
 from flask_cors import CORS
+from atomic.report.firestore import db
 
 report_bp = Blueprint('report', __name__)
 
