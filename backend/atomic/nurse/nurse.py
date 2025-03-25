@@ -4,8 +4,10 @@ from flask import Blueprint, request, jsonify
 from google.cloud import firestore
 import datetime
 import random
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 nurse_bp = Blueprint('nurse', __name__)
 

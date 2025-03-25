@@ -22,11 +22,11 @@ services:
 
   notification_service:
     build:
-      context: ..
+      context: .
       dockerfile: atomic/notification/notification.Dockerfile
     container_name: medgrab_notification_service
     env_file:
-      - ../config/.env
+      - config/.env
     environment:
       - AMQP_HOST=medgrab_rabbitmq
       - AMQP_PORT=5672
