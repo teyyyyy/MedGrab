@@ -2,13 +2,15 @@ import requests
 import datetime
 import os
 from dotenv import load_dotenv
-from rabbitmq.amqp_setup import setup_amqp, send_notification_amqp, close_amqp
+from amqp_setup import send_notification_amqp
 from flask import Flask, request, jsonify, Blueprint
-from ariadne import ObjectType, QueryType, MutationType, gql, make_executable_schema
+from ariadne import QueryType, MutationType, gql, make_executable_schema
 from ariadne.asgi import GraphQL
-from asgiref.wsgi import WsgiToAsgi
-from asgiref.sync import async_to_sync
+from flask_cors import CORS
 import asyncio
+
+app = Flask(__name__)
+CORS(app)
 
 
 # Load environment variables
@@ -38,21 +40,10 @@ def get_nurse_details(nid):
     except requests.RequestException as e:
         print(f"Error in get_nurse_details: {e}")
         return None
-    
-nurse_id_mapping = {
-    "tEYZYaO84tjdjkDrOdym": 123,  # Example mapping
-    # Add more mappings as needed
-}
 
 def get_bookings_for_month(nid, year, month):
     """Get all bookings for a nurse in a specific month"""
     try:
-        # Map the nurse ID to an integer
-        if nid not in nurse_id_mapping:
-            raise ValueError(f"Nurse ID {nid} not found in mapping")
-        
-        mapped_nid = nurse_id_mapping[nid]
-        
         # Format dates for filter
         start_date = f"{year}-{month:02d}-01T00:00+08:00"
         if month == 12:
@@ -60,21 +51,18 @@ def get_bookings_for_month(nid, year, month):
         else:
             end_date = f"{year}-{month+1:02d}-01T00:00+08:00"
         
-        print(f"Calling Booking Service at: {BOOKING_SERVICE_URL}/GetBookingsForNurse/{mapped_nid}")
+        print(f"Calling Booking Service at: {BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}")
         response = requests.get(
-            f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{mapped_nid}",
+            f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}",
             params={"startAfter": start_date, "endBefore": end_date}
         )
-        print(f"Response from Booking Service: {response.text}")  # Debug print
         
         if response.status_code == 200:
             # Parse the response JSON
             response_data = response.json()
-            print(f"Parsed Booking Service Response: {response_data}")  # Debug print
             
             # Extract the 'Bookings' array
             bookings = response_data.get('Bookings', [])
-            print(f"Extracted Bookings: {bookings}")  # Debug print
             return bookings
         
         print(f"Booking service returned status code {response.status_code}")
@@ -88,10 +76,14 @@ def calculate_hours_worked(bookings):
     total_hours = 0
     completed_bookings = []
     
+    print(f"Total bookings received: {len(bookings)}")
+    
     for booking in bookings:
         # Access the nested 'fields' structure
         fields = booking.get('fields', {})
         status = fields.get('Status', {}).get('stringValue', '').lower()
+        
+        print(f"Booking status: {status}")
         
         if status == 'completed':
             completed_bookings.append(booking)
@@ -101,6 +93,9 @@ def calculate_hours_worked(bookings):
                 start_time_str = fields.get('StartTime', {}).get('timestampValue', '')
                 end_time_str = fields.get('EndTime', {}).get('timestampValue', '')
                 
+                print(f"Start time: {start_time_str}")
+                print(f"End time: {end_time_str}")
+                
                 if start_time_str and end_time_str:
                     # Convert timestamps to datetime objects
                     start_time = datetime.datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
@@ -109,10 +104,13 @@ def calculate_hours_worked(bookings):
                     # Calculate duration in hours
                     duration = (end_time - start_time).total_seconds() / 3600
                     total_hours += duration
+                    
+                    print(f"Duration for this booking: {duration} hours")
             except (ValueError, TypeError) as e:
                 print(f"Error parsing time: {e}")
                 pass
     
+    print(f"Total hours calculated: {total_hours}")
     return total_hours, completed_bookings
 
 def update_credit_score(nid, credit_change, reason):
@@ -342,7 +340,9 @@ async def _generate_monthly_report(nid, month):
     
     if nurse_email:
         # Use AMQP to send notification asynchronously
-        subject = f"Your MedGrab Monthly Report - {datetime.datetime.now().strftime('%B %Y')}"
+        # Parse the month parameter to get the correct month name
+        report_month = datetime.datetime.strptime(month, "%Y-%m")
+        subject = f"Your MedGrab Monthly Report - {report_month.strftime('%B %Y')}"
         
         # Format suspension end date for email
         formatted_suspension_end = format_date(nurse_data.get('suspensionEndDate'))
@@ -461,14 +461,14 @@ schema = make_executable_schema(type_defs, query, mutation)
 graphql_app = GraphQL(schema)
 
 # Keep the existing REST endpoint for compatibility if needed
-@generate_report_bp.route("/generate/<nid>/<month>", methods=["POST"])
-async def generate_report_rest(nid, month):
-    try:
-        result = await _generate_monthly_report(nid, month)
-        return jsonify(result)
-    except Exception as e:
-        print(f"Error in generate_report_rest: {e}")
-        return jsonify({"success": False, "message": str(e)}), 500
+# @generate_report_bp.route("/generate/<nid>/<month>", methods=["POST"])
+# async def generate_report_rest(nid, month):
+#     try:
+#         result = await _generate_monthly_report(nid, month)
+#         return jsonify(result)
+#     except Exception as e:
+#         print(f"Error in generate_report_rest: {e}")
+#         return jsonify({"success": False, "message": str(e)}), 500
 
 # Add the GraphQL endpoint
 @generate_report_bp.route("/graphql", methods=["GET", "POST"])
@@ -524,3 +524,8 @@ async def graphql_handler():
     body = b"".join(response_body)
     
     return Response(body, status=status, headers=headers)
+
+app.register_blueprint(generate_report_bp, url_prefix='/api/generate_report')
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5005)  
