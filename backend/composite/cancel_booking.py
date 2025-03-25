@@ -23,7 +23,7 @@ load_dotenv()
 # Service URLs - Update these based on your deployment
 NURSE_SERVICE_URL = 'http://host.docker.internal:5003/api/nurses'
 BOOKING_SERVICE_URL = 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1'
-API_KEY = os.getenv('BOOKING_API_KEY', 'adf0fe5c19401034c4466875565bc6c62253eae1dd84d46fba4eeda2bd1a0c5549168bfefa2021f03df33e9eab0bbd8527f6586f79bb36e1be37bfabac288374756ae7b54a548be1f607408a479467bde1fce109f94fa8e151f875451483291f5ead011168c835409bfbda1f2c7781f6a94cdc75d2d33d99ee7486edd9e0f70746f7d7979798ffd473362a3968da6c618693a184a296ce344c7a4c725b5db0bf72025d91b1c0e2186621b9cc7c482f72035b5bb12bfbda41e29ae25546e5f1e087d5f097d6680aef95c12c166f369c8a5911373c787baaaf620c06297c3839dd6c51719eaaff31b99df87512172c5140157acaf4439b7c13a0aecde2c5cb9643')
+API_KEY = os.getenv('BOOKING_API_KEY')
 
 cancel_booking_bp = Blueprint('cancel_booking', __name__)
 
