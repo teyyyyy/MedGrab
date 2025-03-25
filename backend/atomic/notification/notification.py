@@ -7,12 +7,14 @@ import aio_pika
 import asyncio
 import json
 import threading
+from flask_cors import CORS
 
 # Load environment variables
 load_dotenv()
 
 # Initialize Flask
 app = Flask(__name__)
+CORS(app)
 notification_bp = Blueprint('notification', __name__)
 
 # AMQP configuration

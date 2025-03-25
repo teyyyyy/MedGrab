@@ -1,9 +1,11 @@
 from flask import Flask
 import os
 from composite.generate_report import generate_report_bp
+from flask_cors import CORS
 
 def create_app():
     app = Flask(__name__)
+    CORS(app)  # Allow all origins (you can restrict this later)
 
     @app.route('/')
     def home():
@@ -26,6 +28,7 @@ def create_app():
     app.register_blueprint(generate_report_bp, url_prefix='/api/generate-report')
     
     return app
+
 
 if __name__ == '__main__':
     app = create_app()

@@ -1,11 +1,12 @@
 from atomic.firestore import db
 from flask import Flask
 from flask import Blueprint, request, jsonify
-from google.cloud import firestore
+from flask_cors import CORS
 
 report_bp = Blueprint('report', __name__)
 
 app = Flask(__name__)
+CORS(app)
 
 # Store a report
 @report_bp.route('/', methods=['POST'])
