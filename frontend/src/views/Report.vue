@@ -123,6 +123,9 @@
     ClockIcon, CalendarIcon, InfoIcon
   } from 'lucide-vue-next'
   
+  // Add this import at the top of the script section
+  import axios from 'axios'
+  
   export default {
     name: 'ReportView',
     components: {
@@ -133,10 +136,12 @@
     props: {
       nurseId: {
         type: String,
-        required: true
+        required: false,
+        default: null
       }
     },
     setup(props) {
+      const nurseId = ref(props.nurseId || localStorage.getItem('nurseId'))
       const reports = ref([])
       const loading = ref(true)
       const error = ref(null)
@@ -179,13 +184,10 @@
         error.value = null
         
         try {
-          const response = await fetch('/api/reports?nurseId=' + props.nurseId)
-          if (!response.ok) {
-            throw new Error('Failed to fetch reports')
-          }
-          
-          const data = await response.json()
-          reports.value = data.sort((a, b) => {
+          const response = await axios.get('http://127.0.0.1:5005/api/reports', {
+            params: { nurseId: nurseId.value }
+          })
+          reports.value = response.data.sort((a, b) => {
             return new Date(b.reportMonth) - new Date(a.reportMonth)
           })
         } catch (err) {
@@ -198,13 +200,8 @@
   
       async function viewReport(report) {
         try {
-          const response = await fetch(`/api/reports/${report.id}`)
-          if (!response.ok) {
-            throw new Error('Failed to fetch report content')
-          }
-          
-          const data = await response.json()
-          reportContent.value = data.reportContent
+          const response = await axios.get(`http://127.0.0.1:5005/api/reports/${report.id}`)
+          reportContent.value = response.data.reportContent
           selectedReport.value = report
         } catch (err) {
           console.error('Error fetching report content:', err)
@@ -236,22 +233,16 @@
           `
           
           const variables = {
-            nurseId: props.nurseId,
+            nurseId: nurseId.value,
             month: selectedMonth.value
           }
           
-          const response = await fetch('/api/generate_report/graphql', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              query,
-              variables
-            })
+          const response = await axios.post('http://127.0.0.1:5005/api/generate_report/graphql', {
+            query,
+            variables
           })
           
-          const result = await response.json()
+          const result = response.data
           
           if (result.errors) {
             throw new Error(result.errors[0].message)
@@ -294,6 +285,7 @@
       })
   
       return {
+        nurseId,
         reports,
         loading,
         error,
