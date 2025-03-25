@@ -38,21 +38,10 @@ def get_nurse_details(nid):
     except requests.RequestException as e:
         print(f"Error in get_nurse_details: {e}")
         return None
-    
-nurse_id_mapping = {
-    "tEYZYaO84tjdjkDrOdym": 123,  # Example mapping
-    # Add more mappings as needed
-}
 
 def get_bookings_for_month(nid, year, month):
     """Get all bookings for a nurse in a specific month"""
     try:
-        # Map the nurse ID to an integer
-        if nid not in nurse_id_mapping:
-            raise ValueError(f"Nurse ID {nid} not found in mapping")
-        
-        mapped_nid = nurse_id_mapping[nid]
-        
         # Format dates for filter
         start_date = f"{year}-{month:02d}-01T00:00+08:00"
         if month == 12:
@@ -60,9 +49,9 @@ def get_bookings_for_month(nid, year, month):
         else:
             end_date = f"{year}-{month+1:02d}-01T00:00+08:00"
         
-        print(f"Calling Booking Service at: {BOOKING_SERVICE_URL}/GetBookingsForNurse/{mapped_nid}")
+        print(f"Calling Booking Service at: {BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}")
         response = requests.get(
-            f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{mapped_nid}",
+            f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}",
             params={"startAfter": start_date, "endBefore": end_date}
         )
         print(f"Response from Booking Service: {response.text}")  # Debug print
