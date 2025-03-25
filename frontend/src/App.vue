@@ -1,8 +1,11 @@
 <template>
   <div>
-    <nav>
-      <router-link to="/report">Reports</router-link>
-    </nav>
-    <router-view />
+    <h1>MedGrab Auth</h1>
+    <p>This text should show</p>
+    <AuthForm />
   </div>
 </template>
+
+<script setup>
+import AuthForm from './components/AuthForm.vue'
+</script>
