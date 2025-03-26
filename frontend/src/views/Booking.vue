@@ -52,16 +52,6 @@
           />
         </div>
         <div class="form-group">
-          <label for="nid">Nurse ID (NID):</label>
-          <input
-            type="text"
-            id="nid"
-            v-model="newBooking.NID"
-            placeholder="Enter Nurse ID"
-            required
-          />
-        </div>
-        <div class="form-group">
           <label for="startTime">Start Time:</label>
           <!-- Use VueDatePicker for consistency -->
           <VueDatePicker
@@ -77,6 +67,12 @@
             :required="true"
             :enableTimePicker="true"
           />
+        </div>
+        <div class="form-group">
+          <label for="nid">Nurse Selection</label>
+          <select v-model="newBooking.NID">
+            <option v-for="(nurse, idx) in nurses" :value="nurse.NID" >{{nurse.name}}, Available Timings: {{nurse.availableTiming}}</option>
+          </select>
         </div>
         <div class="form-group">
           <label for="notes">Notes:</label>
@@ -141,6 +137,8 @@ export default {
   data() {
     return {
       bookings: [],
+      nurses: [],
+      selectedNurse: null,
       newBooking: {
         PID: '',
         NID: '',
@@ -169,7 +167,19 @@ export default {
           console.error("Error fetching bookings:", error);
         });
     },
+    getAllNurses() {
+      console.log("getting nurses");
+      axios
+          .get('http://52.232.250.203:5001/api/nurses/')
+          .then(response => {
+            this.nurses = response.data
+          })
+          .catch(error => {
+            console.error("Error fetching nurses:", error)
+          });
+    },
     createBooking() {
+      console.log(this.newBooking);
       axios
         .post(
           'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingComposite/rest/v1/CreateBookingPatient',
@@ -203,7 +213,8 @@ export default {
   created() {
     // Initial load of bookings
     this.getBookings();
-  }
+    this.getAllNurses();
+  },
 }
 </script>
 
