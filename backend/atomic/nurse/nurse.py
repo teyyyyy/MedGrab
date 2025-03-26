@@ -1,15 +1,49 @@
-from atomic.firestore import db
 from flask import Flask
 from flask import Blueprint, request, jsonify
-from google.cloud import firestore
+import firebase_admin
+from firebase_admin import credentials, firestore
 import datetime
 import random
-from flask_cors import CORS
+import os
 
 app = Flask(__name__)
-CORS(app)
 
 nurse_bp = Blueprint('nurse', __name__)
+
+# Initialize Firebase with local credentials
+current_dir = os.path.dirname(os.path.abspath(__file__))
+cred_path = os.path.join(current_dir, 'credentials.json')
+
+# Check if Firebase app is already initialized
+if not firebase_admin._apps:
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred)
+else:
+    # If an app exists but with different credentials, initialize with a name
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred, name='nurse_app')
+
+# Get Firestore client
+db = firestore.client()
+
+
+# @app.route('/')
+# def home():
+#     return """
+#     <h1>Nurse Service API</h1>
+#     <p>Available endpoints:</p>
+#     <ul>
+#         <li>/api/nurses/ - GET all nurses, POST create nurse</li>
+#         <li>/api/nurses/&lt;id&gt; - GET single nurse, PUT update nurse</li>
+#         <li>/api/nurses/&lt;id&gt;/credit - PUT update credit score</li>
+#         <li>/api/nurses/assign - POST assign nurse</li>
+#     </ul>
+#     """
+
+# # Test route for the blueprint
+# @nurse_bp.route('/test', methods=['GET'])
+# def test():
+#     return jsonify({"message": "Nurse blueprint is working!"})
 
 # Create a new nurse
 @nurse_bp.route('/', methods=['POST'])
