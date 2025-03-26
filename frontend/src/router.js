@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 // import FBInstanceAuth from '../firebase/firebase_auth'
 import Report from './views/Report.vue'
+import Booking from './views/Booking.vue'
 
 
 const routes = [
@@ -15,6 +16,11 @@ const routes = [
         path: '/report',
         name:'Report',
         component: Report
+    },
+    {
+        path: '/booking',
+        name:'Booking',
+        component: Booking
     },
 
 ]

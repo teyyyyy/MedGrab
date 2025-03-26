@@ -25,6 +25,31 @@ REPORT_SERVICE_URL='http://127.0.0.1:5004/api/reports'
 
 generate_report_bp = Blueprint('generate_report', __name__)
 
+import pdfkit
+import tempfile
+import os
+
+# Add this function to convert HTML to PDF
+def convert_html_to_pdf(html_content, output_path):
+    """Convert HTML content to PDF and save to output_path"""
+    try:
+        # Create a temporary file for the HTML content
+        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as temp_html:
+            temp_html.write(html_content.encode('utf-8'))
+            temp_html_path = temp_html.name
+        
+        # Convert HTML to PDF using pdfkit (which uses wkhtmltopdf)
+        # You'll need to install wkhtmltopdf on your server
+        pdfkit.from_file(temp_html_path, output_path)
+        
+        # Clean up the temporary HTML file
+        os.unlink(temp_html_path)
+        
+        return True
+    except Exception as e:
+        print(f"Error converting HTML to PDF: {e}")
+        return False
+
 
 # Helper functions
 def get_nurse_details(nid):
@@ -335,7 +360,12 @@ async def _generate_monthly_report(nid, month):
     
     
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
-    report_link = f"/reports/{nid}/{month}.html"
+    pdf_filename = f"{nid}_{month}.pdf"
+    pdf_path = os.path.join("reports", pdf_filename)
+    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
+    pdf_success = convert_html_to_pdf(report_content, pdf_path)
+    
+    report_link = f"/reports/{pdf_filename}" if pdf_success else None
     store_result = store_report(nid, month, report_content, report_link)
     
     if nurse_email:
@@ -375,7 +405,7 @@ async def _generate_monthly_report(nid, month):
         <html>
         <body>
             <p>Hi {nurse_name},</p>
-            <p>Your monthly activity report is now available. <a href='{report_link}'>View your report here</a>.</p>
+            <p>Your monthly activity report is now available. <a href='{report_link}'>Download your report here</a>.</p>
             <hr>
             <h3>Summary:</h3>
             <ul>
