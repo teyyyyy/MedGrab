@@ -42,6 +42,12 @@ def make_booking():
     )
     print(response.json())
 
+    print(f"Calling Notification Service at: /CreateBooking/")
+    response = requests.post(
+        f"{main_url}/CreateBooking/",
+        json=newBooking
+    )
+
     return jsonify({
         'success': True,
         'message': 'Booking made successfully'
