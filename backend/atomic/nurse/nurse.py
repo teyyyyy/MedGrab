@@ -1,5 +1,6 @@
 from flask import Flask
 from flask import Blueprint, request, jsonify
+from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
@@ -7,6 +8,7 @@ import random
 import os
 
 app = Flask(__name__)
+CORS(app)
 
 nurse_bp = Blueprint('nurse', __name__)
 
@@ -106,7 +108,7 @@ def get_all_nurses():
     for doc in nurses_ref.stream():
         nurse_data = doc.to_dict()
         nurses.append(nurse_data)
-    
+
     return jsonify(nurses)
 
 # Retrieve a nurse by ID

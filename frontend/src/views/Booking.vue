@@ -170,7 +170,18 @@ export default {
     getAllNurses() {
       console.log("getting nurses");
       axios
-          .get('http://52.232.250.203:5001/api/nurses/')
+          .get('http://localhost:5003/api/nurses/',)
+          .then(response => {
+            this.nurses = response.data
+          })
+          .catch(error => {
+            console.error("Error fetching nurses:", error)
+          });
+    },
+    getAllPatients() {
+      console.log("getting nurses");
+      axios
+          .get('http://localhost:5003/api/nurses/',)
           .then(response => {
             this.nurses = response.data
           })
@@ -182,7 +193,7 @@ export default {
       console.log(this.newBooking);
       axios
         .post(
-          'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingComposite/rest/v1/CreateBookingPatient',
+          'http://localhost:5008/v1/MakeBooking',
           this.newBooking
         )
         .then(() => {
@@ -197,7 +208,7 @@ export default {
     acceptBooking() {
       axios
         .post(
-          'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingComposite/rest/v1/AcceptBooking',
+          'http://localhost:5008/v1/AcceptBooking',
           this.acceptData
         )
         .then(() => {
@@ -213,6 +224,7 @@ export default {
   created() {
     // Initial load of bookings
     this.getBookings();
+    this.getAllPatients();
     this.getAllNurses();
   },
 }
