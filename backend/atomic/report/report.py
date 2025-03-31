@@ -16,9 +16,8 @@ def store_report():
     nid = data.get('NID')
     report_month = data.get('reportMonth') #YYYY-MM
     report_content = data.get('reportContent')
-    report_link = data.get('reportLink')
     
-    if not all([nid, report_month, report_content, report_link]):
+    if not all([nid, report_month, report_content]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
     
     # Generate report ID
@@ -28,16 +27,14 @@ def store_report():
         'RID': report_ref.id,
         'NID': nid,
         'reportMonth': report_month,
-        'reportContent': report_content, #Is this needed???
-        'reportLink': report_link,
+        'reportContent': report_content
     }
     
     report_ref.set(report_data)
     
     return jsonify({
         'success': True,
-        'reportId': report_ref.id,
-        'reportLink': report_link
+        'reportId': report_ref.id
     })
 
 # Retrieve a report based on month

@@ -5,13 +5,11 @@ from pathlib import Path
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# Explicitly load .env from the config folder
-env_path = Path(__file__).parent.parent.parent / "config" / ".env"
-load_dotenv(dotenv_path=env_path)
 
 def initialise_firestore():
-    # Option 1: Use a path to the credentials file
-    cred_path = os.getenv('FIREBASE_CREDENTIALS_PATH')
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    cred_path = os.path.join(current_dir, 'credentials.json')
     
     if cred_path and os.path.exists(cred_path):
         if not firebase_admin._apps:

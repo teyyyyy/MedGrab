@@ -3,11 +3,10 @@ import datetime
 import os
 from dotenv import load_dotenv
 from amqp_setup import send_notification_amqp
-from flask import Flask, request, jsonify, Blueprint
+from flask import Flask, request, Blueprint
 from ariadne import QueryType, MutationType, gql, make_executable_schema
 from ariadne.asgi import GraphQL
 from flask_cors import CORS
-import asyncio
 
 app = Flask(__name__)
 CORS(app)
@@ -19,37 +18,10 @@ load_dotenv()
 # Service URLs - Update these based on your deployment
 NURSE_SERVICE_URL='http://127.0.0.1:5003/api/nurses'
 BOOKING_SERVICE_URL='https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1'
-NOTIFICATION_SERVICE_URL='http://127.0.0.1:5002/api/notifications/send-email'
 REPORT_SERVICE_URL='http://127.0.0.1:5004/api/reports'
 
 
 generate_report_bp = Blueprint('generate_report', __name__)
-
-import pdfkit
-import tempfile
-import os
-
-# Add this function to convert HTML to PDF
-def convert_html_to_pdf(html_content, output_path):
-    """Convert HTML content to PDF and save to output_path"""
-    try:
-        # Create a temporary file for the HTML content
-        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as temp_html:
-            temp_html.write(html_content.encode('utf-8'))
-            temp_html_path = temp_html.name
-        
-        # Convert HTML to PDF using pdfkit (which uses wkhtmltopdf)
-        # You'll need to install wkhtmltopdf on your server
-        pdfkit.from_file(temp_html_path, output_path)
-        
-        # Clean up the temporary HTML file
-        os.unlink(temp_html_path)
-        
-        return True
-    except Exception as e:
-        print(f"Error converting HTML to PDF: {e}")
-        return False
-
 
 # Helper functions
 def get_nurse_details(nid):
@@ -150,14 +122,13 @@ def update_credit_score(nid, credit_change, reason):
     except requests.RequestException:
         return None
 
-def store_report(nid, report_month, report_content, report_link):
+def store_report(nid, report_month, report_content):
     """Store report in the database"""
     try:
         data = {
             "NID": nid,
             "reportMonth": report_month,
-            "reportContent": report_content,
-            "reportLink": report_link
+            "reportContent": report_content
         }
         response = requests.post(REPORT_SERVICE_URL, json=data)
         return response.json() if response.status_code == 200 else None
@@ -331,14 +302,12 @@ async def _generate_monthly_report(nid, month):
     cancellation_rate = (cancelled_bookings / total_bookings * 100) if total_bookings > 0 else 0
     
     # Simplified suspension logic:
-    # If nurse is suspended, automatically reset suspension and credit score
     if nurse_data.get('isSuspended', False):
-        # Update nurse document to remove suspension and reset credit score to 50
         try:
             response = requests.put(f"{NURSE_SERVICE_URL}/{nid}", json={
                 'isSuspended': False,
                 'suspensionEndDate': None,
-                'creditScore': 50  # Reset credit score to 50 after suspension
+                'creditScore': 50
             })
             if response.status_code == 200:
                 nurse_data['isSuspended'] = False
@@ -348,44 +317,27 @@ async def _generate_monthly_report(nid, month):
         except requests.RequestException as e:
             print(f"Error resetting suspension status: {e}")
     else:
-        # Only check for warning/suspension if not already suspended
         status_result = check_nurse_status(nid)
         if status_result and status_result.get('success'):
-            is_warned = status_result.get('isWarned', False)
-            is_suspended = status_result.get('isSuspended', False)
-            suspension_end_date = status_result.get('suspensionEndDate')
-            nurse_data['isWarned'] = is_warned
-            nurse_data['isSuspended'] = is_suspended
-            nurse_data['suspensionEndDate'] = suspension_end_date
-    
+            nurse_data['isWarned'] = status_result.get('isWarned', False)
+            nurse_data['isSuspended'] = status_result.get('isSuspended', False)
+            nurse_data['suspensionEndDate'] = status_result.get('suspensionEndDate')
     
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
-    pdf_filename = f"{nid}_{month}.pdf"
-    pdf_path = os.path.join("reports", pdf_filename)
-    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
-    pdf_success = convert_html_to_pdf(report_content, pdf_path)
     
-    report_link = f"/reports/{pdf_filename}" if pdf_success else None
-    store_result = store_report(nid, month, report_content, report_link)
+    store_result = store_report(nid, month, report_content)
     
     if nurse_email:
-        # Use AMQP to send notification asynchronously
-        # Parse the month parameter to get the correct month name
-        report_month = datetime.datetime.strptime(month, "%Y-%m")
-        subject = f"Your MedGrab Monthly Report - {report_month.strftime('%B %Y')}"
-        
-        # Format suspension end date for email
+        subject = f"Your MedGrab Monthly Report - {datetime.datetime.strptime(month, '%Y-%m').strftime('%B %Y')}"
         formatted_suspension_end = format_date(nurse_data.get('suspensionEndDate'))
         
-        # Create warning and suspension messages based on status
         warning_message = ""
         if nurse_data.get('isWarned', False) and not nurse_data.get('isSuspended', False):
             warning_message = """
             <div style="margin-top: 20px; padding: 10px; background-color: #fff3cd; border-left: 5px solid #ffc107; color: #856404;">
                 <h3 style="margin-top: 0;">⚠️ Credit Score Warning</h3>
                 <p>Your credit score has dropped to {credit_score}, which is below our warning threshold of 30.</p>
-                <p>Please be careful about cancellations to avoid account suspension. If your score drops below 20, 
-                your account will be automatically suspended for 30 days.</p>
+                <p>Please be careful about cancellations to avoid account suspension.</p>
             </div>
             """.format(credit_score=nurse_data.get('creditScore', 0))
             
@@ -396,16 +348,18 @@ async def _generate_monthly_report(nid, month):
                 <h3 style="margin-top: 0;">🚫 Account Suspension Notice</h3>
                 <p>Due to your credit score falling below the critical threshold of 20, your account has been suspended until {suspension_end}.</p>
                 <p>During this period, you will not be shown in the nurse pool for new bookings.</p>
-                <p>After your suspension ends, please maintain a good credit score to avoid future suspensions.</p>
             </div>
             """.format(suspension_end=formatted_suspension_end)
         
-        # Combine everything into a single email
         message = f"""
         <html>
         <body>
             <p>Hi {nurse_name},</p>
-            <p>Your monthly activity report is now available. <a href='{report_link}'>Download your report here</a>.</p>
+            <p>Your monthly activity report is now available.</p>
+            <!-- Remove the link and include the actual report content -->
+            <div style="margin: 20px 0;">
+                {report_content}  <!-- This is the HTML report content -->
+            </div>
             <hr>
             <h3>Summary:</h3>
             <ul>
@@ -429,10 +383,9 @@ async def _generate_monthly_report(nid, month):
         notification_result = await send_notification_amqp(nurse_email, subject, message)
         print(f"Notification result: {notification_result}")
     
-    print(f"Report generation completed successfully: {report_link}")
+    print(f"Report generation completed successfully")
     return {
         "success": True, 
-        "reportLink": report_link, 
         "message": "Report generated and email queued for delivery.",
         "month": month,
         "nurseId": nid,
