@@ -122,13 +122,15 @@ def update_credit_score(nid, credit_change, reason):
     except requests.RequestException:
         return None
 
-def store_report(nid, report_month, report_content):
+def store_report(nid, report_month, report_content, hours_worked, total_bookings):
     """Store report in the database"""
     try:
         data = {
             "NID": nid,
             "reportMonth": report_month,
-            "reportContent": report_content
+            "reportContent": report_content,
+            "hoursWorked": hours_worked,
+            "totalBookings": total_bookings
         }
         response = requests.post(REPORT_SERVICE_URL, json=data)
         return response.json() if response.status_code == 200 else None
@@ -325,7 +327,7 @@ async def _generate_monthly_report(nid, month):
     
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
     
-    store_result = store_report(nid, month, report_content)
+    store_result = store_report(nid, month, report_content, hours_worked, total_bookings)
     
     if nurse_email:
         subject = f"Your MedGrab Monthly Report - {datetime.datetime.strptime(month, '%Y-%m').strftime('%B %Y')}"

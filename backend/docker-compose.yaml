@@ -1,5 +1,5 @@
 version: '3'
-
+# RABBITMQ
 services:
   rabbitmq:
     image: rabbitmq:3.12-management
@@ -20,6 +20,7 @@ services:
     networks:
       - medgrab_network
 
+# NOTIFICATION
   notification_service:
     build:
       context: .
@@ -39,6 +40,21 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+    networks:
+      - medgrab_network
+
+# REPORT
+  report_service:
+    build:
+      context: .
+      dockerfile: atomic/report/report.Dockerfile
+    container_name: medgrab_report_service
+    env_file:
+      - .env
+    ports:
+      - "5004:5004"
+    volumes:
+      - ./atomic/report/credentials.json:/app/credentials.json
     networks:
       - medgrab_network
 
