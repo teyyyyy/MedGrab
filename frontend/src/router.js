@@ -25,8 +25,6 @@ const router = createRouter({
 
 // THIS IS TO REDIRECT PATIENT/NURSE TO THEIR RESPECTIVE PAGES!!!!!
 
-// export default router;
-
 // import { createRouter, createWebHistory } from 'vue-router'
 // import Report from './views/Report.vue'
 // import Booking from './views/Booking.vue'
