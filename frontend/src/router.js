@@ -1,50 +1,78 @@
-import { createRouter, createWebHistory } from 'vue-router'
-// import FBInstanceAuth from '../firebase/firebase_auth'
-import Report from './views/Report.vue'
-import BookingCreator from './views/BookingCreator.vue'
-import BookingManager from "./views/BookingManager.vue";
+// import { createRouter, createWebHistory } from 'vue-router'
+// import Report from './views/Report.vue'
+// import Booking from './views/Booking.vue'
 
+
+// const routes = [
+//     {
+//         path: '/report',
+//         name:'Report',
+//         component: Report
+//     },
+//     {
+//         path: '/booking',
+//         name:'Booking',
+//         component: Booking
+//     },
+
+// ]
+
+
+// const router = createRouter({
+//     history: createWebHistory(),
+//     routes
+// })
+
+// THIS IS TO REDIRECT PATIENT/NURSE TO THEIR RESPECTIVE PAGES!!!!!
+
+import { createRouter, createWebHistory } from 'vue-router'
+import Report from './views/Report.vue'
+import Booking from './views/Booking.vue'
+import Login from './views/Login.vue'
 
 const routes = [
-    // Example of a route. Add meta: { requiresAuth: true } to require authentication, else don't need to add.
-    // {
-    //     path: '/profile/:userId',
-    //     name: 'ProfileView',
-    //     component: ProfileView,
-    //     meta: { requiresAuth: true }
-    // }, 
-    {
-        path: '/report',
-        name:'Report',
-        component: Report
-    },
-    {
-        path: '/bookingcreator',
-        name:'Booking Creator',
-        component: BookingCreator
-    },
-    {
-        path: '/bookingmanager',
-        name:'Booking Manager',
-        component: BookingManager
-    },
-
+  {
+    path: '/',
+    name: 'Login',
+    component: Login
+  },
+  {
+    path: '/report',
+    name: 'Report',
+    component: Report,
+    meta: { requiresAuth: true, requiresNurse: true }
+  },
+  {
+    path: '/booking',
+    name: 'Booking',
+    component: Booking,
+    meta: { requiresAuth: true, requiresPatient: true }
+  }
 ]
 
-
 const router = createRouter({
-    history: createWebHistory(),
-    routes
+  history: createWebHistory(),
+  routes
 })
 
-// Optional: Navigation guard for authentication
-// router.beforeEach((to, from, next) => {
-//     const user = FBInstanceAuth.currentUser;
-//     if (to.meta.requiresAuth && !user) {
-//         next('/login'); // Redirect to login if not authenticated
-//     } else {
-//         next(); // Proceed as usual
-//     }
-// });
+// Add navigation guard
+router.beforeEach((to, from, next) => {
+  const isAuthenticated = localStorage.getItem('userId') !== null
+  const userRole = localStorage.getItem('userRole')
+  
+  if (to.matched.some(record => record.meta.requiresAuth)) {
+    if (!isAuthenticated) {
+      next('/')
+    } else if (to.meta.requiresNurse && userRole !== 'nurse') {
+      next('/booking') // or show error
+    } else if (to.meta.requiresPatient && userRole !== 'patient') {
+      next('/report') // or show error
+    } else {
+      next()
+    }
+  } else {
+    next()
+  }
+})
 
-export default router;
+export default router

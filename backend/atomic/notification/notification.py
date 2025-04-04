@@ -12,18 +12,16 @@ from flask_cors import CORS
 # Load environment variables
 load_dotenv()
 
-# Initialize Flask
 app = Flask(__name__)
 CORS(app)
 notification_bp = Blueprint('notification', __name__)
 
-# AMQP configuration
-AMQP_HOST = os.getenv('AMQP_HOST', 'localhost')
-AMQP_PORT = int(os.getenv('AMQP_PORT', '5672'))
-EXCHANGE_NAME = os.getenv('AMQP_EXCHANGE', 'medgrab_exchange')
-EXCHANGE_TYPE = os.getenv('AMQP_EXCHANGE_TYPE', 'topic')
-NOTIFICATION_ROUTING_KEY = os.getenv('NOTIFICATION_ROUTING_KEY', 'notification.email')
-NOTIFICATION_QUEUE = os.getenv('NOTIFICATION_QUEUE', 'email_notifications')
+AMQP_HOST = os.getenv('AMQP_HOST')
+AMQP_PORT = int(os.getenv('AMQP_PORT'))
+EXCHANGE_NAME = os.getenv('AMQP_EXCHANGE')
+EXCHANGE_TYPE = os.getenv('AMQP_EXCHANGE_TYPE')
+NOTIFICATION_ROUTING_KEY = os.getenv('NOTIFICATION_ROUTING_KEY')
+NOTIFICATION_QUEUE = os.getenv('NOTIFICATION_QUEUE')
 
 # Function to send email using SendGrid
 def send_email_notification(to_email, subject, message):
@@ -33,7 +31,7 @@ def send_email_notification(to_email, subject, message):
         print("Missing SendGrid API Key!")
         return {"error": "Missing SendGrid API Key"}, 500
     
-    from_email = 'medgrab0@gmail.com'  # Change to your email address
+    from_email = 'medgrab0@gmail.com'  
 
     email_message = Mail(
         from_email=from_email,

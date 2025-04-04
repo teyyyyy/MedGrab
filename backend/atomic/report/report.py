@@ -1,7 +1,27 @@
 from flask import Flask
 from flask import Blueprint, request, jsonify
 from flask_cors import CORS
-from atomic.report.firestore import db
+
+# Initialise databse
+import os
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+
+def initialise_firestore():
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    cred_path = os.path.join(current_dir, 'credentials.json')
+    
+    if cred_path and os.path.exists(cred_path):
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+        return firestore.client()
+    
+
+db = initialise_firestore()
+
 
 report_bp = Blueprint('report', __name__)
 
@@ -16,9 +36,10 @@ def store_report():
     nid = data.get('NID')
     report_month = data.get('reportMonth') #YYYY-MM
     report_content = data.get('reportContent')
-    report_link = data.get('reportLink')
+    hours_worked = data.get('hoursWorked')
+    total_bookings = data.get('totalBookings')
     
-    if not all([nid, report_month, report_content, report_link]):
+    if not all([nid, report_month, report_content]):
         return jsonify({'success': False, 'error': 'Missing required fields'}), 400
     
     # Generate report ID
@@ -28,16 +49,16 @@ def store_report():
         'RID': report_ref.id,
         'NID': nid,
         'reportMonth': report_month,
-        'reportContent': report_content, #Is this needed???
-        'reportLink': report_link,
+        'reportContent': report_content,
+        'hoursWorked': hours_worked,
+        'totalBookings': total_bookings
     }
     
     report_ref.set(report_data)
     
     return jsonify({
         'success': True,
-        'reportId': report_ref.id,
-        'reportLink': report_link
+        'reportId': report_ref.id
     })
 
 # Retrieve a report based on month
@@ -68,7 +89,9 @@ def list_reports(nid):
         results.append({
             'RID': report_data.get('RID'),
             'reportMonth': report_data.get('reportMonth'),
-            'reportLink': report_data.get('reportLink')
+            'reportLink': report_data.get('reportLink'),
+            'hoursWorked': report_data.get('hoursWorked'),
+            'totalBookings': report_data.get('totalBookings')
         })
     
     return jsonify(results)
