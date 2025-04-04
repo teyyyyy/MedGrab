@@ -27,8 +27,9 @@
 
 import { createRouter, createWebHistory } from 'vue-router'
 import Report from './views/Report.vue'
-import Booking from './views/Booking.vue'
+import BookingCreator from './views/BookingCreator.vue'
 import Login from './views/Login.vue'
+import BookingManager from "./views/BookingManager.vue";
 
 const routes = [
   {
@@ -43,10 +44,16 @@ const routes = [
     meta: { requiresAuth: true, requiresNurse: true }
   },
   {
-    path: '/booking',
-    name: 'Booking',
-    component: Booking,
+    path: '/bookingcreator',
+    name: 'Booking Creator',
+    component: BookingCreator,
     meta: { requiresAuth: true, requiresPatient: true }
+  },
+  {
+    path: '/bookingmanager',
+    name: 'Booking Manager',
+    component: BookingManager,
+    meta: { requiresAuth: true, requiresNurse: true }
   }
 ]
 

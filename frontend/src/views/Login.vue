@@ -55,7 +55,7 @@
         
         // Redirect based on role
         if (role.value === 'patient') {
-          router.push('/booking')
+          router.push('/bookingcreator')
         } else {
           router.push('/report')
         }

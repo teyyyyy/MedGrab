@@ -1,7 +1,7 @@
 <template>
   <div v-if="!loggedIn" class="booking-container">
-    <h1>Login patient</h1>
-    <section>
+    <h1>Loading patient</h1>
+<!--    <section>
       <select
           id="pid"
           v-model="selectedPatient"
@@ -14,7 +14,7 @@
         </option>
       </select>
       <input type="button" value="Login" @click="login" :disabled="!selectedPatient">
-    </section>
+    </section>-->
   </div>
   <div v-else class="booking-container">
     <h1>Hello, {{ selectedPatient.Name }}</h1>
@@ -272,7 +272,9 @@ export default {
       axios
           .get('https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/GetAllPatients')
           .then(response => {
-            this.patients = response.data.Patients;
+            this.patients = response.data.Patients
+            this.selectedPatient = this.patients.find((element) => element.PID === localStorage.getItem('userId'))
+            this.login();
           })
           .catch(error => {
             console.error("Error fetching patients:", error);

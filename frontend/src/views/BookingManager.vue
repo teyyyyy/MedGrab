@@ -1,7 +1,7 @@
 <template>
   <div v-if="!loggedIn" class="booking-container">
-    <h1>Login nurse</h1>
-    <section>
+    <h1>Loading nurse</h1>
+<!--    <section>
       <select
           id="pid"
           v-model="selectedNurse"
@@ -14,7 +14,7 @@
         </option>
       </select>
       <input type="button" value="Login" @click="login" :disabled="!selectedNurse">
-    </section>
+    </section>-->
   </div>
   <div v-else class="booking-container">
     <h1>Hello, {{selectedNurse.name}}</h1>
@@ -187,6 +187,8 @@ export default {
           .get('http://localhost:5003/api/nurses/')
           .then(response => {
             this.nurses = response.data;
+            this.selectedNurse = this.nurses.find((element) => element.NID === localStorage.getItem('userId'))
+            this.login();
           })
           .catch(error => {
             console.error("Error fetching nurses:", error);
