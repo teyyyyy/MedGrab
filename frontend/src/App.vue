@@ -2,7 +2,10 @@
   <div>
     <nav>
       <router-link to="/report">Reports</router-link>
-      <router-link to="/booking">Bookings</router-link>
+      <br>
+      <router-link to="/bookingcreator">Patient Booking Creator</router-link>
+      <br>
+      <router-link to="/bookingmanager">Nurse Booking Manager</router-link>
     </nav>
     <router-view />
   </div>
@@ -20,7 +23,6 @@
     <router-view />
   </div>
 </template>
-
 <script>
 import { computed } from 'vue'
 
