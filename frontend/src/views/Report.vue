@@ -45,12 +45,6 @@
             </div>
             <div class="report-date">Generated: {{ formatDate(report.createdAt) }}</div>
           </div>
-          <div class="report-actions">
-            <button class="view-btn" @click.stop="downloadPdf(report)">
-              <DownloadIcon class="mini-icon" />
-              PDF
-            </button>
-          </div>
         </div>
       </div>
   
@@ -66,10 +60,6 @@
           <div class="modal-body" v-html="reportContent"></div>
           <div class="modal-footer">
             <button class="secondary-btn" @click="selectedReport = null">Close</button>
-            <button class="primary-btn" @click="downloadPdf(selectedReport)">
-              <DownloadIcon class="mini-icon" />
-              Download PDF
-            </button>
           </div>
         </div>
       </div>
@@ -119,7 +109,7 @@
   import { ref, onMounted, computed } from 'vue'
   import { 
     FileIcon, FileTextIcon, PlusIcon, XIcon, 
-    LoaderIcon, AlertCircleIcon, DownloadIcon,
+    LoaderIcon, AlertCircleIcon,
     ClockIcon, CalendarIcon, InfoIcon
   } from 'lucide-vue-next'
   import axios from 'axios'
@@ -128,7 +118,7 @@
     name: 'ReportView',
     components: {
       FileIcon, FileTextIcon, PlusIcon, XIcon, 
-      LoaderIcon, AlertCircleIcon, DownloadIcon,
+      LoaderIcon, AlertCircleIcon, 
       ClockIcon, CalendarIcon, InfoIcon
     },
     props: {
@@ -275,12 +265,7 @@
           isGenerating.value = false
         }
       }
-  
-      function downloadPdf(report) {
-        // This would need to be implemented on your backend
-        // For now, we'll just show a message
-        alert('PDF generation would be handled by the backend. Report ID: ' + report.RID)
-      }
+
   
       onMounted(() => {
         if (!nurseId.value) {
@@ -305,8 +290,7 @@
         formatMonth,
         formatDate,
         viewReport,
-        generateReport,
-        downloadPdf
+        generateReport
       }
     }
   }

@@ -2,7 +2,8 @@ from flask import Flask, Blueprint, request, jsonify
 from dotenv import load_dotenv
 import os
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+import base64
 import aio_pika
 import asyncio
 import json
@@ -24,7 +25,7 @@ NOTIFICATION_ROUTING_KEY = os.getenv('NOTIFICATION_ROUTING_KEY')
 NOTIFICATION_QUEUE = os.getenv('NOTIFICATION_QUEUE')
 
 # Function to send email using SendGrid
-def send_email_notification(to_email, subject, message):
+def send_email_notification(to_email, subject, message, attachment=None, attachment_name="report.pdf"):
     sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
     
     if not sendgrid_api_key:
@@ -40,6 +41,26 @@ def send_email_notification(to_email, subject, message):
         html_content=message
     )
 
+    # Add attachment if provided
+    if attachment:
+        if isinstance(attachment, str):
+            # If attachment is a file path
+            with open(attachment, 'rb') as f:
+                data = f.read()
+        else:
+            # If attachment is bytes
+            data = attachment
+        
+        encoded = base64.b64encode(data).decode()
+        
+        attached_file = Attachment(
+            FileContent(encoded),
+            FileName(attachment_name),
+            FileType('application/pdf'),
+            Disposition('attachment')
+        )
+        email_message.attachment = attached_file
+
     try:
         sg = SendGridAPIClient(sendgrid_api_key)
         response = sg.send(email_message)
@@ -52,33 +73,40 @@ def send_email_notification(to_email, subject, message):
         print(f"Email sending failed: {str(e)}")
         return {"error": str(e)}, 500
 
-# AMQP consumer callback
 async def email_notification_callback(message):
-    """Callback function for processing email notifications"""
     async with message.process():
         try:
-            # Decode the message body
-            body = message.body.decode()
-            print(f"Received message: {body}")
+            notification = json.loads(message.body.decode())
             
-            # Parse the message as JSON
-            notification = json.loads(body)
-            print(f"Parsed notification: {notification}")
-            
-            # Extract email details
+            # Required fields
             to_email = notification.get("to_email")
             subject = notification.get("subject")
             message_content = notification.get("message")
             
-            if to_email and subject and message_content:
-                print(f"Sending email to: {to_email}")
-                email_result = send_email_notification(to_email, subject, message_content)
-                print(f"Email result: {email_result}")
-            else:
-                print("Invalid notification format")
+            if not all([to_email, subject, message_content]):
+                print("Missing required email fields")
+                return
+            
+            # Optional attachment
+            attachment = None
+            if "attachment" in notification:
+                attachment = base64.b64decode(notification["attachment"])
+            
+            attachment_name = notification.get("attachment_name", "report.pdf")
+            
+            # Send email
+            email_result = send_email_notification(
+                to_email,
+                subject,
+                message_content,
+                attachment=attachment,
+                attachment_name=attachment_name
+            )
+            print(f"Email result: {email_result}")
+            
         except Exception as e:
             print(f"Error processing message: {e}")
-
+            
 # AMQP consumer setup function
 async def setup_consumer():
     """Set up the AMQP consumer"""
