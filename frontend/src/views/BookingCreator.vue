@@ -1,11 +1,28 @@
 <template>
-  <div class="booking-container">
-    <h1>Booking Management</h1>
+  <div v-if="!loggedIn" class="booking-container">
+    <h1>Loading patient</h1>
+<!--    <section>
+      <select
+          id="pid"
+          v-model="selectedPatient"
+          :disabled="isLoadingPatients"
+          required
+      >
+        <option value="" disabled selected>Select a patient</option>
+        <option v-for="patient in patients" :key="patient.PID" :value="patient">
+          {{ patient.Name }}
+        </option>
+      </select>
+      <input type="button" value="Login" @click="login" :disabled="!selectedPatient">
+    </section>-->
+  </div>
+  <div v-else class="booking-container">
+    <h1>Hello, {{ selectedPatient.Name }}</h1>
 
     <!-- Section: View All Bookings -->
     <section class="view-bookings">
       <div class="section-header">
-        <h2>View All Bookings</h2>
+        <h2>Your Bookings</h2>
         <button class="btn-refresh" @click="getBookings" :disabled="isLoadingBookings">
           <span v-if="isLoadingBookings">Loading...</span>
           <span v-else>Refresh Bookings</span>
@@ -26,7 +43,6 @@
           <thead>
           <tr>
             <th>BID</th>
-            <th>Patient</th>
             <th>Nurse</th>
             <th>Start Time</th>
             <th>End Time</th>
@@ -38,8 +54,7 @@
           <tbody>
           <tr v-for="(booking, index) in bookings" :key="index">
             <td>{{ booking.fields.BID?.stringValue }}</td>
-            <td>{{ booking.fields.PID?.stringValue }}</td>
-            <td>{{ booking.fields.NID?.stringValue }}</td>
+            <td>{{ nurses.find((element) => element.NID === booking.fields.NID?.stringValue).name }}</td>
             <td>{{ formatDateTime(booking.fields.StartTime?.timestampValue) }}</td>
             <td>{{ formatDateTime(booking.fields.EndTime?.timestampValue) }}</td>
             <td>
@@ -59,24 +74,6 @@
     <section class="create-booking">
       <h2>Create Booking</h2>
       <form @submit.prevent="createBooking">
-        <div class="form-group">
-          <label for="pid">Patient Selection:</label>
-          <div class="input-wrapper">
-            <select
-                id="pid"
-                v-model="newBooking.PID"
-                :disabled="isLoadingPatients"
-                required
-            >
-              <option value="" disabled selected>Select a patient</option>
-              <option v-for="patient in patients" :key="patient.PID" :value="patient.PID">
-                {{ patient.Name }}
-              </option>
-            </select>
-            <div v-if="isLoadingPatients" class="input-loader"></div>
-          </div>
-        </div>
-
         <div class="form-row">
           <div class="form-group">
             <label for="startTime">Start Time:</label>
@@ -101,48 +98,42 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="nid">Nurse Selection:</label>
-          <div class="input-wrapper">
-            <select
-                id="nid"
-                v-model="newBooking.NID"
-                :disabled="isLoadingNurses"
-                required
-            >
-              <option value="" disabled selected>Select a nurse</option>
-              <option v-for="nurse in nurses" :key="nurse.NID" :value="nurse.NID">
-                {{ nurse.name }} - Available: {{ nurse.availableTiming }}
-              </option>
-            </select>
-            <div v-if="isLoadingNurses" class="input-loader"></div>
+        <div class="form-row">
+          <div class="form-group">
+            <span for="nid">Assigned Nurse: </span>
+              <span v-if="isLoadingNurses" class="input-loader"></span>
+            <span v-else>{{selectedNurse?.name}} {{selectedNurse?.availableTiming}}</span>
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="notes">Notes:</label>
-          <div class="input-wrapper">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="notes">Notes:</label>
+            <div class="input-wrapper">
           <textarea
               id="notes"
               v-model="newBooking.Notes"
               placeholder="Additional notes"
               rows="3"
           ></textarea>
+            </div>
           </div>
         </div>
 
-        <div class="form-group">
-          <label for="paymentAmt">Payment Amount:</label>
-          <div class="input-prefix">
-            <span class="currency-symbol">$</span>
-            <input
-                type="number"
-                step="0.01"
-                id="paymentAmt"
-                v-model="newBooking.PaymentAmt"
-                placeholder="0.00"
-                required
-            />
+        <div class="form-row">
+          <div class="form-group">
+            <label for="paymentAmt">Payment Amount:</label>
+            <div class="input-prefix">
+              <span class="currency-symbol">$</span>
+              <input
+                  type="number"
+                  step="0.01"
+                  id="paymentAmt"
+                  v-model="newBooking.PaymentAmt"
+                  placeholder="0.00"
+                  required
+              />
+            </div>
           </div>
         </div>
 
@@ -156,34 +147,6 @@
 
       <div v-if="createMessage" :class="['message', createSuccess ? 'success' : 'error']">
         {{ createMessage }}
-      </div>
-    </section>
-
-    <!-- Section: Accept Booking -->
-    <section class="accept-booking">
-      <h2>Accept Booking</h2>
-      <form @submit.prevent="acceptBooking">
-        <div class="form-group">
-          <label for="acceptBid">Booking ID (BID):</label>
-          <input
-              type="text"
-              id="acceptBid"
-              v-model="acceptData.bid"
-              placeholder="Enter Booking ID"
-              required
-          />
-        </div>
-
-        <div class="form-actions">
-          <button type="submit" class="btn-submit" :disabled="isAcceptingBooking">
-            <span v-if="isAcceptingBooking">Processing...</span>
-            <span v-else>Accept Booking</span>
-          </button>
-        </div>
-      </form>
-
-      <div v-if="acceptMessage" :class="['message', acceptSuccess ? 'success' : 'error']">
-        {{ acceptMessage }}
       </div>
     </section>
   </div>
@@ -201,9 +164,11 @@ export default {
   },
   data() {
     return {
+      loggedIn: false,
       bookings: [],
       nurses: [],
       patients: [],
+      selectedPatient: null,
       selectedNurse: null,
 
       // Loading states
@@ -262,11 +227,16 @@ export default {
       return statusMap[status] || '';
     },
 
+    login() {
+      this.loggedIn = true;
+      this.getBookings();
+    },
+
     getBookings() {
       this.isLoadingBookings = true;
 
       axios
-          .get('https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/GetAllBookings')
+          .get('https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/GetBookingsFromUser/' + this.selectedPatient.PID)
           .then(response => {
             this.bookings = response.data.Bookings || [];
           })
@@ -285,6 +255,8 @@ export default {
           .get('http://localhost:5003/api/nurses/')
           .then(response => {
             this.nurses = response.data;
+            this.randomNurse();
+            console.log(this.selectedNurse);
           })
           .catch(error => {
             console.error("Error fetching nurses:", error);
@@ -300,7 +272,9 @@ export default {
       axios
           .get('https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/GetAllPatients')
           .then(response => {
-            this.patients = response.data.Patients;
+            this.patients = response.data.Patients
+            this.selectedPatient = this.patients.find((element) => element.PID === localStorage.getItem('userId'))
+            this.login();
           })
           .catch(error => {
             console.error("Error fetching patients:", error);
@@ -313,6 +287,7 @@ export default {
     createBooking() {
       this.isCreatingBooking = true;
       this.createMessage = '';
+      this.newBooking.PID = this.selectedPatient.PID
 
       axios
           .post(
@@ -344,48 +319,35 @@ export default {
             this.isCreatingBooking = false;
           });
     },
-
-    acceptBooking() {
-      this.isAcceptingBooking = true;
-      this.acceptMessage = '';
-
-      axios
-          .post(
-              'http://localhost:5008/v1/AcceptBooking',
-              this.acceptData
-          )
-          .then(() => {
-            this.acceptMessage = "Booking accepted successfully!";
-            this.acceptSuccess = true;
-            this.getBookings();
-
-            // Reset form
-            this.acceptData.bid = '';
-          })
-          .catch(error => {
-            console.error("Error accepting booking:", error);
-            this.acceptMessage = "Error accepting booking. Please try again.";
-            this.acceptSuccess = false;
-          })
-          .finally(() => {
-            this.isAcceptingBooking = false;
-          });
+    randomNurse() {
+      if (true) {
+        var ranNum = Math.floor(Math.random() * (this?.nurses?.length - 1 + 1))
+        console.log(ranNum)
+        console.log(this.nurses);
+        this.newBooking.NID = this?.nurses[ranNum]?.NID;
+        this.selectedNurse = this?.nurses[ranNum];
+      }
     }
   },
   created() {
     // Initial load of data with loading states
-    this.getBookings();
+    // this.getBookings();
     this.getAllPatients();
     this.getAllNurses();
   },
+  computed: {
+    startTime() {
+      return this.newBooking.startTime;
+    },
+    endTime() {
+      return this.newBooking.startTime;
+    }
+  }
 }
 </script>
 
 <style scoped>
 .booking-container {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
   padding: 24px;
   background: #f5f7fa;
   max-width: 1200px;
@@ -586,8 +548,12 @@ tr:hover {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Empty state */
