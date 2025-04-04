@@ -1,5 +1,5 @@
 version: '3'
-
+# RABBITMQ
 services:
   rabbitmq:
     image: rabbitmq:3.12-management
@@ -20,6 +20,11 @@ services:
     networks:
       - medgrab_network
 
+###################################
+  # ATOMIC
+###################################
+
+# NOTIFICATION
   notification_service:
     build:
       context: .
@@ -61,6 +66,60 @@ services:
         condition: service_healthy
       notification_service:
         condition: service_started
+    networks:
+      - medgrab_network
+
+# NURSE
+  nurse_service:
+    build:
+      context: .
+      dockerfile: atomic/nurse/nurse.Dockerfile
+    container_name: medgrab_nurse_service
+    env_file:
+      - .env
+    ports:
+      - "5003:5003"
+    volumes:
+      - ./atomic/nurse/credentials.json:/app/credentials.json
+    networks:
+      - medgrab_network
+# REPORT
+  report_service:
+    build:
+      context: .
+      dockerfile: atomic/report/report.Dockerfile
+    container_name: medgrab_report_service
+    env_file:
+      - .env
+    ports:
+      - "5004:5004"
+    volumes:
+      - ./atomic/report/credentials.json:/app/credentials.json
+    networks:
+      - medgrab_network
+
+###################################
+  # COMPOSITE
+###################################
+
+# GENERATE REPORT
+  generate_report:
+    build:
+      context: .
+      dockerfile: composite/generate_report.Dockerfile
+    container_name: medgrab_generate_service
+    ports:
+      - "5005:5005"
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq  
+      - AMQP_PORT=5672              
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
+      - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
+      - REPORT_SERVICE_URL=http://report_servicee:5004/api/reports
+    depends_on:
+      - rabbitmq
     networks:
       - medgrab_network
 

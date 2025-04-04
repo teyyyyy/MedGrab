@@ -40,7 +40,7 @@
           <div class="report-details">
             <h3>{{ formatMonth(report.reportMonth) }}</h3>
             <div class="report-stats">
-              <span><ClockIcon class="mini-icon" /> {{ report.hours?.toFixed(1) || 'N/A' }} hours</span>
+              <span><ClockIcon class="mini-icon" /> {{ report.hoursWorked?.toFixed(1) || 'N/A' }} hours</span>
               <span><CalendarIcon class="mini-icon" /> {{ report.totalBookings || 0 }} bookings</span>
             </div>
             <div class="report-date">Generated: {{ formatDate(report.createdAt) }}</div>
@@ -122,8 +122,6 @@
     LoaderIcon, AlertCircleIcon, DownloadIcon,
     ClockIcon, CalendarIcon, InfoIcon
   } from 'lucide-vue-next'
-  
-  // Add this import at the top of the script section
   import axios from 'axios'
   
   export default {
@@ -141,7 +139,7 @@
       }
     },
     setup(props) {
-      const nurseId = ref(props.nurseId || localStorage.getItem('nurseId'))
+      const nurseId = ref(localStorage.getItem('userId'))
       const reports = ref([])
       const loading = ref(true)
       const error = ref(null)
@@ -184,9 +182,7 @@
         error.value = null
         
         try {
-          const response = await axios.get('http://127.0.0.1:5005/api/reports', {
-            params: { nurseId: nurseId.value }
-          })
+          const response = await axios.get(`http://localhost:5004/api/reports/${nurseId.value}`)
           reports.value = response.data.sort((a, b) => {
             return new Date(b.reportMonth) - new Date(a.reportMonth)
           })
@@ -200,7 +196,9 @@
   
       async function viewReport(report) {
         try {
-          const response = await axios.get(`http://127.0.0.1:5005/api/reports/${report.id}`)
+          const response = await axios.get(
+            `http://localhost:5004/api/reports/${nurseId.value}/${report.reportMonth}`
+          )
           reportContent.value = response.data.reportContent
           selectedReport.value = report
         } catch (err) {
@@ -220,7 +218,6 @@
               generateReport(nurseId: $nurseId, month: $month) {
                 success
                 message
-                reportLink
                 month
                 nurseId
                 hours
@@ -237,19 +234,24 @@
             month: selectedMonth.value
           }
           
-          const response = await axios.post('http://127.0.0.1:5005/api/generate_report/graphql', {
+          const response = await axios.post('http://localhost:5005/api/generate_report/graphql', {
             query,
             variables
+          }, {
+            headers: {
+              'Content-Type': 'application/json'
+            }
           })
           
-          const result = response.data
-          
-          if (result.errors) {
-            throw new Error(result.errors[0].message)
+          // Handle GraphQL errors (different from HTTP errors)
+          if (response.data.errors) {
+            throw new Error(response.data.errors[0].message)
           }
           
-          if (!result.data.generateReport.success) {
-            throw new Error(result.data.generateReport.message)
+          const result = response.data.data.generateReport
+          
+          if (!result.success) {
+            throw new Error(result.message || 'Failed to generate report')
           }
           
           // Close modal and refresh reports
@@ -258,6 +260,14 @@
           
           // Show success message
           alert(`Report for ${formatMonth(selectedMonth.value)} has been generated successfully!`)
+          
+          // You can access other returned fields if needed:
+          console.log('Report details:', {
+            hours: result.hours,
+            bookings: result.totalBookings,
+            cancellationRate: result.cancellationRate
+          })
+          
         } catch (err) {
           console.error('Error generating report:', err)
           error.value = `Failed to generate report: ${err.message}`
@@ -267,20 +277,17 @@
       }
   
       function downloadPdf(report) {
-        // Convert the report link to a PDF link
-        const pdfUrl = report.reportLink.replace('.html', '.pdf')
-        
-        // Create a temporary anchor element to trigger the download
-        const a = document.createElement('a')
-        a.href = pdfUrl
-        a.download = `Report-${report.reportMonth}.pdf`
-        a.target = '_blank'
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
+        // This would need to be implemented on your backend
+        // For now, we'll just show a message
+        alert('PDF generation would be handled by the backend. Report ID: ' + report.RID)
       }
   
       onMounted(() => {
+        if (!nurseId.value) {
+          error.value = 'No nurse ID found. Please log in again.'
+          loading.value = false
+          return
+        }
         fetchReports()
       })
   
