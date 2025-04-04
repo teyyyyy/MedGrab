@@ -1,4 +1,4 @@
-<template>
+<!-- <template>
   <div>
     <nav>
       <router-link to="/report">Reports</router-link>
@@ -6,11 +6,11 @@
     </nav>
     <router-view />
   </div>
-</template>
+</template> -->
 
 
 <!-- UPDATED "LOGIN PAGE" -->
-<!-- <template>
+<template>
   <div>
     <nav v-if="isAuthenticated">
       <router-link to="/report" v-if="isNurse">Reports</router-link>
@@ -83,4 +83,4 @@ nav button {
   border-radius: 4px;
   cursor: pointer;
 }
-</style> -->
+</style>

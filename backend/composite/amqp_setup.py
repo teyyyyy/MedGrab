@@ -4,12 +4,12 @@ import asyncio
 import json
 
 # AMQP configurations
-AMQP_HOST = os.getenv('AMQP_HOST', 'localhost')  # RabbitMQ host
-AMQP_PORT = int(os.getenv('AMQP_PORT', '5672'))  # RabbitMQ port
-EXCHANGE_NAME = os.getenv('AMQP_EXCHANGE', 'medgrab_exchange')  # Renamed exchange
-EXCHANGE_TYPE = os.getenv('AMQP_EXCHANGE_TYPE', 'topic')  # Exchange type
-NOTIFICATION_ROUTING_KEY = os.getenv('NOTIFICATION_ROUTING_KEY', 'notification.email')  # Updated routing key
-NOTIFICATION_QUEUE = os.getenv('NOTIFICATION_QUEUE', 'email_notifications')  # Added queue name
+AMQP_HOST = os.getenv('AMQP_HOST', 'medgrab-rabbitmq')  
+AMQP_PORT = int(os.getenv('AMQP_PORT', '5672'))  
+EXCHANGE_NAME = os.getenv('AMQP_EXCHANGE', 'medgrab_exchange')  
+EXCHANGE_TYPE = os.getenv('AMQP_EXCHANGE_TYPE', 'topic')  
+NOTIFICATION_ROUTING_KEY = os.getenv('NOTIFICATION_ROUTING_KEY', 'notification.email') 
+NOTIFICATION_QUEUE = os.getenv('NOTIFICATION_QUEUE', 'email_notifications')  
 
 # Global AMQP connection and channel
 amqp_connection = None

@@ -1,6 +1,6 @@
 import requests
 import datetime
-import os
+from os import environ
 from dotenv import load_dotenv
 from amqp_setup import send_notification_amqp
 from flask import Flask, request, Blueprint
@@ -16,9 +16,9 @@ CORS(app)
 load_dotenv()
 
 # Service URLs - Update these based on your deployment
-NURSE_SERVICE_URL='http://127.0.0.1:5003/api/nurses'
-BOOKING_SERVICE_URL='https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1'
-REPORT_SERVICE_URL='http://127.0.0.1:5004/api/reports'
+NURSE_SERVICE_URL= environ.get('NURSE_SERVICE_URL')
+BOOKING_SERVICE_URL= environ.get('BOOKING_SERVICE_URL')
+REPORT_SERVICE_URL= environ.get('REPORT_SERVICE_URL')
 
 
 generate_report_bp = Blueprint('generate_report', __name__)
@@ -195,86 +195,113 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
     is_suspended = nurse_data.get('isSuspended', False)
     suspension_end_date = format_date(nurse_data.get('suspensionEndDate'))
     
-    html_content = f"""
-    <html>
-    <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; }}
-            h1 {{ color: #2c3e50; }}
-            .summary {{ background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px; }}
-            .warning {{ color: #e74c3c; }}
-            .good {{ color: #27ae60; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
-            th {{ background-color: #f2f2f2; }}
-            .highlight {{ background-color: #f1c40f; font-weight: bold; }}
-        </style>
-    </head>
-    <body>
-        <h1>Monthly Activity Report - {month_name} {year}</h1>
-        <div class="summary">
-            <h2>Summary for {nurse_data.get('name', 'Unknown Nurse')}</h2>
-            <p>Report Period: {month_name} {year}</p>
-            <p>Total Bookings: {total_bookings}</p>
-            <p>Completed Sessions: {completed_bookings}</p>
-            <p>Cancelled Sessions: <span class="{'warning' if cancelled_bookings > 2 else ''}">
-                {cancelled_bookings}</span></p>
-            <p>Cancellation Rate: <span class="{'warning' if cancellation_rate > 30 else ''}">
-                {cancellation_rate:.1f}%</span></p>
-            <p>Total Hours Worked: <span class="{'warning' if hours_worked > 60 else ''}">
-                {hours_worked:.1f} hours</span></p>
-            <p>Average Session Duration: {avg_session:.1f} hours</p>
-            <p>Current Credit Score: <span class="{'warning' if credit_score < 40 else 'good' if credit_score > 80 else ''}">
-                {credit_score}</span></p>
-        </div>
+    # Generate booking rows
+    booking_rows = []
+    for b in bookings:
+        fields = b.get('fields', {})
+        status = fields.get('Status', {}).get('stringValue', 'Unknown').lower()
         
-        {'''<div class="warning">
-            <h3>⚠️ Warning</h3>
-            <p>Your credit score is low. Please be careful about cancellations.</p>
-        </div>''' if is_warned else ''}
+        start_time = fields.get('StartTime', {}).get('timestampValue', '')
+        end_time = fields.get('EndTime', {}).get('timestampValue', '')
         
-        {'''<div class="warning">
-            <h3>🚫 Account Suspension</h3>
-            <p>Your account has been suspended for 1 month due to low credit score.</p>
-            <p>During this period, you will not be shown in the nurse pool for new bookings.</p>
-            <p>Suspension end date: {suspension_end_date}</p>
-        </div>''' if is_suspended else ''}
+        date_part = start_time.split('T')[0] if start_time else 'N/A'
+        time_part = start_time.split('T')[1].split('.')[0] if start_time else 'N/A'
         
-        <h2>Detailed Activity</h2>
+        duration = 0.0
+        if start_time and end_time:
+            try:
+                start = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                end = datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                duration = (end - start).total_seconds() / 3600
+            except ValueError:
+                pass
         
-        {'<p>You have not completed any bookings this month.</p>' if completed_bookings == 0 else ''}
+        reason = fields.get('cancellationReason', {}).get('stringValue', '-') if status == 'cancelled' else '-'
         
-        {'<h3 class="warning">High Cancellation Rate</h3>' if cancellation_rate > 30 else ''}
-        {'<p>You\'ve cancelled {cancelled_bookings} bookings this month. This affects your credit score and reliability rating.</p>' if cancelled_bookings > 2 else ''}
-        
-        {'<h3 class="warning">High Workload</h3>' if hours_worked > 60 else ''}
-        {'<p>You\'ve worked {hours_worked:.1f} hours this month. Consider taking adequate rest to maintain service quality.</p>' if hours_worked > 60 else ''}
-        
-        <h3>Booking Details</h3>
-        <table>
-            <tr>
-                <th>Date</th>
-                <th>Time</th>
-                <th>Duration</th>
-                <th>Status</th>
-                <th>Reason (if cancelled)</th>
-            </tr>
-            {''.join([f"""
-            <tr class="{'highlight' if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled' else ''}">
-                <td>{b.get('fields', {}).get('StartTime', {}).get('timestampValue', '').split('T')[0] if b.get('fields', {}).get('StartTime', {}).get('timestampValue') else 'N/A'}</td>
-                <td>{b.get('fields', {}).get('StartTime', {}).get('timestampValue', '').split('T')[1].split('.')[0] if b.get('fields', {}).get('StartTime', {}).get('timestampValue') else 'N/A'}</td>
-                <td>{(datetime.datetime.fromisoformat(b.get('fields', {}).get('EndTime', {}).get('timestampValue', '').replace('Z', '+00:00')) - 
-                     datetime.datetime.fromisoformat(b.get('fields', {}).get('StartTime', {}).get('timestampValue', '').replace('Z', '+00:00'))).total_seconds() / 3600:.1f} hours</td>
-                <td>{b.get('fields', {}).get('Status', {}).get('stringValue', 'Unknown')}</td>
-                <td>{b.get('fields', {}).get('cancellationReason', {}).get('stringValue', '-') if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled' else '-'}</td>
-            </tr>
-            """ for b in bookings])}
-        </table>
-    </body>
-    </html>
-    """
+        booking_rows.append(
+            f'<tr class="{"highlight" if status == "cancelled" else ""}">'
+            f'<td>{date_part}</td>'
+            f'<td>{time_part}</td>'
+            f'<td>{duration:.1f} hours</td>'
+            f'<td>{status.capitalize()}</td>'
+            f'<td>{reason}</td>'
+            '</tr>'
+        )
     
-    return html_content
+    # Build HTML content using string concatenation instead of multi-line f-string
+    html_parts = [
+        '<html>',
+        '<head>',
+        '<style>',
+        'body { font-family: Arial, sans-serif; margin: 40px; }',
+        'h1 { color: #2c3e50; }',
+        '.summary { background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin-bottom: 20px; }',
+        '.warning { color: #e74c3c; }',
+        '.good { color: #27ae60; }',
+        'table { width: 100%; border-collapse: collapse; margin-top: 20px; }',
+        'th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }',
+        'th { background-color: #f2f2f2; }',
+        '.highlight { background-color: #f1c40f; font-weight: bold; }',
+        '</style>',
+        '</head>',
+        '<body>',
+        f'<h1>Monthly Activity Report - {month_name} {year}</h1>',
+        '<div class="summary">',
+        f'<h2>Summary for {nurse_data.get("name", "Unknown Nurse")}</h2>',
+        f'<p>Report Period: {month_name} {year}</p>',
+        f'<p>Total Bookings: {total_bookings}</p>',
+        f'<p>Completed Sessions: {completed_bookings}</p>',
+        f'<p>Cancelled Sessions: <span class="{"warning" if cancelled_bookings > 2 else ""}">{cancelled_bookings}</span></p>',
+        f'<p>Cancellation Rate: <span class="{"warning" if cancellation_rate > 30 else ""}">{cancellation_rate:.1f}%</span></p>',
+        f'<p>Total Hours Worked: <span class="{"warning" if hours_worked > 60 else ""}">{hours_worked:.1f} hours</span></p>',
+        f'<p>Average Session Duration: {avg_session:.1f} hours</p>',
+        f'<p>Current Credit Score: <span class="{"warning" if credit_score < 40 else "good" if credit_score > 80 else ""}">{credit_score}</span></p>',
+        '</div>'
+    ]
+    
+    # Add warning/suspension messages if needed
+    if is_warned:
+        html_parts.extend([
+            '<div class="warning">',
+            '<h3>⚠️ Warning</h3>',
+            '<p>Your credit score is low. Please be careful about cancellations.</p>',
+            '</div>'
+        ])
+    
+    if is_suspended:
+        html_parts.extend([
+            '<div class="warning">',
+            '<h3>🚫 Account Suspension</h3>',
+            '<p>Your account has been suspended for 1 month due to low credit score.</p>',
+            '<p>During this period, you will not be shown in the nurse pool for new bookings.</p>',
+            f'<p>Suspension end date: {suspension_end_date}</p>',
+            '</div>'
+        ])
+    
+    # Add activity details
+    html_parts.extend([
+        '<h2>Detailed Activity</h2>',
+        f'{"<p>You have not completed any bookings this month.</p>" if completed_bookings == 0 else ""}',
+        f"""{"<h3 class='warning'>High Cancellation Rate</h3>" if cancellation_rate > 30 else ""}""",
+        f"""{"<p>You've cancelled " + str(cancelled_bookings) + " bookings this month. This affects your credit score and reliability rating.</p>" if cancelled_bookings > 2 else ""}""",
+        f"""{"<h3 class='warning'>High Workload</h3>" if hours_worked > 60 else ""}""",
+        f"""{"<p>You've worked " + f"{hours_worked:.1f}" + " hours this month. Consider taking adequate rest to maintain service quality.</p>" if hours_worked > 60 else ""}""",
+        '<h3>Booking Details</h3>',
+        '<table>',
+        '<tr>',
+        '<th>Date</th>',
+        '<th>Time</th>',
+        '<th>Duration</th>',
+        '<th>Status</th>',
+        '<th>Reason (if cancelled)</th>',
+        '</tr>',
+        ''.join(booking_rows),
+        '</table>',
+        '</body>',
+        '</html>'
+    ])
+    
+    return '\n'.join(html_parts)
 
 def check_nurse_status(nid):
     """Check and update nurse warning/suspension status"""

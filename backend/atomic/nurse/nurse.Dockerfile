@@ -5,10 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY atomic/report/ .
+COPY atomic/nurse/ .
 
-EXPOSE 5004
+EXPOSE 5003
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "report.py"]
+CMD ["python", "nurse.py"]
