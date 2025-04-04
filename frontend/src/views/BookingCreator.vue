@@ -760,7 +760,7 @@ export default {
 </script>
 
 <style scoped>
-:root {
+.booking-container {
   --primary: #4361ee;
   --primary-light: #edf2ff;
   --secondary: #3a0ca3;

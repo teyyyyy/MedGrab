@@ -137,6 +137,8 @@ class BookingService:
             response = requests.get(url)
             response_json = response.json()
 
+            logger.info(f"Getting booking details from: {response_json}")
+
             if response_json.get("StatusCode") != 200:
                 return {"error": response_json.get("Message", "Unknown error")}, response_json.get("StatusCode", 500)
 
@@ -209,6 +211,41 @@ class BookingService:
         </html>
         """
 
+    @staticmethod
+    def create_patient_notification_message(patient_name: str, start_time: str, end_time: str, nurse_name: str,
+                                            notes: str) -> str:
+        """
+        Create HTML notification message for patient email.
+
+        Args:
+            patient_name: Name of the patient
+            start_time: Booking start time
+            end_time: Booking end time
+            nurse_name: Name of the nurse
+            notes: Additional booking notes
+
+        Returns:
+            HTML formatted message
+        """
+        return f"""
+        <html>
+        <body>
+            <p>Dear {patient_name},</p>
+            <p>Your booking with MedGrab has been successfully created.</p>
+            <hr>
+            <h3>Booking Details:</h3>
+            <ul>
+                <li><strong>Nurse:</strong> {nurse_name}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+
+            <p>Your nurse will confirm this booking shortly. You'll receive another notification once confirmed.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
 
 @booking_composite_bp.route('/MakeBooking', methods=['POST'])
 async def make_booking():
@@ -259,6 +296,7 @@ async def make_booking():
             'PaymentAmt': payment_amt
         }
 
+        logger.info(f"Getting nurse")
         # Get nurse details
         nurse_result, nurse_status = await BookingService.get_nurse_details(nurse_id)
         if nurse_status != 200:
@@ -267,6 +305,7 @@ async def make_booking():
                 'error': 'No nurse with that NID found'
             }), 400
 
+        logger.info(f"Getting patient")
         # Get patient details
         patient_result, patient_status = await BookingService.get_patient_details(patient_id)
         if patient_status != 200:
@@ -292,6 +331,25 @@ async def make_booking():
             end_time,
             patient.get('Location', 'Unknown'),
             notes
+        )
+
+        # Get patient details - we already have this from above
+        patient_name = patient.get('PatientName', 'Patient')
+
+        # Create notification for patient
+        patient_notification_message = BookingService.create_patient_notification_message(
+            patient_name,
+            start_time,
+            end_time,
+            nurse_result.get('name', 'Nurse'),
+            notes
+        )
+
+        # Send notification to patient
+        await send_notification_amqp(
+            patient.get('Email', ''),
+            "Your MedGrab booking confirmation",
+            patient_notification_message
         )
 
         await send_notification_amqp(
@@ -338,6 +396,7 @@ async def accept_booking():
                 'error': 'Missing booking ID (bid)'
             }), 400
 
+        logger.info(f"Getting booking")
         # Get booking details
         booking_result, booking_status = await BookingService.get_booking(booking_id)
         if booking_status != 200:
@@ -346,6 +405,44 @@ async def accept_booking():
                 'error': booking_result.get('error', 'Failed to fetch booking')
             }), booking_status
 
+
+        # Extract nurse and patient IDs from booking
+        booking_data = booking_result.get('Booking', {})
+        nurse_id = booking_data.get('fields').get('NID').get('stringValue')
+        patient_id = booking_data.get('fields').get('PID').get('stringValue')
+        logger.info(f"Booking data: {booking_data}")
+
+        if not nurse_id or not patient_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing nurse or patient ID in booking data'
+            }), 400
+
+        logger.info(f"Getting nurse")
+        # Get nurse details
+        nurse_result, nurse_status = await BookingService.get_nurse_details(nurse_id)
+        if nurse_status != 200:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fetch nurse details'
+            }), nurse_status
+
+        logger.info(f"Getting patient")
+        # Get patient details
+        patient_result, patient_status = await BookingService.get_patient_details(patient_id)
+        if patient_status != 200:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fetch patient details'
+            }), patient_status
+
+        nurse_email = nurse_result.get('email', '')
+        nurse_name = nurse_result.get('name', 'Nurse')
+
+        patient = patient_result.get('patient', {})
+        patient_email = patient.get('Email', '')
+        patient_name = patient.get('PatientName', 'Patient')
+
         # Update booking status
         update_result, update_status = await BookingService.update_booking_status(booking_id, 'Accepted')
         if update_status != 200:
@@ -353,6 +450,67 @@ async def accept_booking():
                 'success': False,
                 'error': update_result.get('error', 'Failed to update booking status')
             }), update_status
+
+        # Create and send notifications to nurse and patient
+        start_time = booking_data.get('StartTime', '')
+        end_time = booking_data.get('EndTime', '')
+        location = patient.get('Location', 'Unknown')
+        notes = booking_data.get('Notes', '')
+
+        # Notification for nurse
+        nurse_notification = f"""
+        <html>
+        <body>
+            <p>Hello {nurse_name},</p>
+            <p>You have accepted the booking for patient {patient_name}.</p>
+            <hr>
+            <h3>Booking Details:</h3>
+            <ul>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Location:</strong> {location}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+            <p>Thank you for your service.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Notification for patient
+        patient_notification = f"""
+        <html>
+        <body>
+            <p>Hello {patient_name},</p>
+            <p>Good news! Your booking has been accepted by {nurse_name}.</p>
+            <hr>
+            <h3>Booking Details:</h3>
+            <ul>
+                <li><strong>Nurse:</strong> {nurse_name}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+            <p>Please be available at the scheduled time.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Send notifications
+        if nurse_email:
+            await send_notification_amqp(
+                nurse_email,
+                "Booking Accepted",
+                nurse_notification
+            )
+
+        if patient_email:
+            await send_notification_amqp(
+                patient_email,
+                "Your booking has been accepted",
+                patient_notification
+            )
 
         return jsonify({
             'success': True,
@@ -366,6 +524,197 @@ async def accept_booking():
             'error': 'Internal server error'
         }), 500
 
+
+@booking_composite_bp.route('/RejectBooking', methods=['POST'])
+async def reject_booking():
+    """
+    Endpoint to reject a booking and reassign it to another nurse.
+
+    Expected request body:
+    {
+        "bid": "booking_id"
+    }
+
+    Returns:
+        JSON response with success status and message
+    """
+    try:
+        data = request.json
+        logger.info(f"Received reject booking request: {data}")
+
+        booking_id = data.get('bid')
+        if not booking_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing booking ID (bid)'
+            }), 400
+
+        # Get booking details
+        booking_result, booking_status = await BookingService.get_booking(booking_id)
+        if booking_status != 200:
+            return jsonify({
+                'success': False,
+                'error': booking_result.get('error', 'Failed to fetch booking')
+            }), booking_status
+
+        # Extract nurse and patient IDs from booking
+        booking_data = booking_result.get('Booking', {})
+        current_nurse_id = booking_data.get('fields').get('NID').get('stringValue')
+        patient_id = booking_data.get('fields').get('PID').get('stringValue')
+        logger.info(f"Booking data: {booking_data}")
+
+        if not current_nurse_id or not patient_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing nurse or patient ID in booking data'
+            }), 400
+
+        # Get all nurses
+        try:
+            all_nurses_url = f"{Config.NURSE_URL}api/nurses"
+            logger.info(f"Fetching all nurses from: {all_nurses_url}")
+
+            all_nurses_response = requests.get(all_nurses_url)
+            all_nurses_response.raise_for_status()
+            all_nurses = all_nurses_response.json()
+
+            # Filter out the current nurse
+            available_nurses = [nurse for nurse in all_nurses if nurse.get('_id') != current_nurse_id]
+
+            if not available_nurses:
+                return jsonify({
+                    'success': False,
+                    'error': 'No other nurses available for reassignment'
+                }), 400
+
+            # Choose a random nurse from the available nurses
+            import random
+            new_nurse = random.choice(available_nurses)
+            new_nurse_id = new_nurse.get('_id')
+
+        except requests.RequestException as e:
+            logger.error(f"Error fetching nurses: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fetch available nurses'
+            }), 500
+
+        # Update booking with new nurse
+        try:
+            update_nurse_url = f"{Config.MAIN_URL}UpdateBookingNurse/{booking_id}/{new_nurse_id}"
+            logger.info(f"Updating booking nurse at: {update_nurse_url}")
+
+            update_nurse_response = requests.patch(update_nurse_url, json={"APIKey": Config.API_KEY})
+            update_nurse_response.raise_for_status()
+
+            update_nurse_result = update_nurse_response.json()
+
+            if update_nurse_result.get("StatusCode") != 200:
+                return jsonify({
+                    'success': False,
+                    'error': update_nurse_result.get("Message", "Failed to update booking nurse")
+                }), update_nurse_result.get("StatusCode", 500)
+
+        except requests.RequestException as e:
+            logger.error(f"Error updating booking nurse: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to update booking nurse'
+            }), 500
+
+        # Get patient details
+        patient_result, patient_status = await BookingService.get_patient_details(patient_id)
+        if patient_status != 200:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to fetch patient details'
+            }), patient_status
+
+        # Get current nurse details
+        current_nurse_result, current_nurse_status = await BookingService.get_nurse_details(current_nurse_id)
+
+        patient = patient_result.get('patient', {})
+        patient_email = patient.get('Email', '')
+        patient_name = patient.get('PatientName', 'Patient')
+
+        # Create and send notifications
+        start_time = booking_data.get('fields').get('StartTime', {}).get('stringValue', '')
+        end_time = booking_data.get('fields').get('EndTime', {}).get('stringValue', '')
+        location = patient.get('Location', 'Unknown')
+        notes = booking_data.get('fields').get('Notes', {}).get('stringValue', '')
+
+        # Notification for new nurse
+        new_nurse_notification = f"""
+        <html>
+        <body>
+            <p>Hello {new_nurse.get('name', 'Nurse')},</p>
+            <p>A booking has been reassigned to you.</p>
+            <hr>
+            <h3>Booking Details:</h3>
+            <ul>
+                <li><strong>Patient:</strong> {patient_name}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Location:</strong> {location}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+            <p><strong>Please respond to the request within 24 hours.</strong></p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Notification for patient
+        patient_notification = f"""
+        <html>
+        <body>
+            <p>Hello {patient_name},</p>
+            <p>Your booking has been reassigned to a new nurse: {new_nurse.get('name', 'Nurse')}.</p>
+            <hr>
+            <h3>Updated Booking Details:</h3>
+            <ul>
+                <li><strong>Nurse:</strong> {new_nurse.get('name', 'Nurse')}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+            <p>Your new nurse will confirm this booking shortly.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Send notifications
+        new_nurse_email = new_nurse.get('email', '')
+        if new_nurse_email:
+            await send_notification_amqp(
+                new_nurse_email,
+                "New booking assigned to you",
+                new_nurse_notification
+            )
+
+        if patient_email:
+            await send_notification_amqp(
+                patient_email,
+                "Your booking has been reassigned",
+                patient_notification
+            )
+
+        # Update booking status to "Pending" for the new nurse
+        await BookingService.update_booking_status(booking_id, 'Pending')
+
+        return jsonify({
+            'success': True,
+            'message': 'Booking rejected and reassigned',
+            'new_nurse_id': new_nurse_id
+        })
+
+    except Exception as e:
+        logger.error(f"Error in reject_booking: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
 
 # Register blueprint
 app.register_blueprint(booking_composite_bp, url_prefix='/v1')
