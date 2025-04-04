@@ -17,3 +17,4 @@ pdfkit==1.0.0
 wkhtmltopdf==0.2
 weasyprint==65.0
 flask[async]
+httpx
