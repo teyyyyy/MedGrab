@@ -5,10 +5,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY composite/booking/booking.py ./booking.py
-COPY composite/booking/amqp_lib.py ./amqp_lib.py
-COPY composite/booking/amqp_setup.py ./amqp_setup.py
+COPY composite/ .
 
 EXPOSE 5008
+
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "booking.py"]
