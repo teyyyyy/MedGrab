@@ -31,6 +31,7 @@
     </header>
 
     <!-- Bookings Management Section -->
+    <!-- Restructured View Bookings Section -->
     <section class="view-bookings">
       <div class="section-header">
         <div class="section-title">
@@ -38,17 +39,17 @@
           <span class="section-badge">{{ bookings.length }} Total</span>
         </div>
         <button class="btn-refresh" @click="getBookings" :disabled="isLoadingBookings">
-          <span v-if="isLoadingBookings" class="btn-icon">
-            <span class="spin-loader"></span>
-          </span>
+      <span v-if="isLoadingBookings" class="btn-icon">
+        <span class="spin-loader"></span>
+      </span>
           <span v-else class="btn-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 2v6h-6"></path>
-              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
-              <path d="M3 22v-6h6"></path>
-              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
-            </svg>
-          </span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 2v6h-6"></path>
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+          <path d="M3 22v-6h6"></path>
+          <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+        </svg>
+      </span>
           <span>{{ isLoadingBookings ? 'Updating...' : 'Refresh' }}</span>
         </button>
       </div>
@@ -70,41 +71,42 @@
         <p class="hint-text">When patients schedule appointments with you, they'll appear here</p>
       </div>
 
-      <!-- Table Actions (Filters & Search) -->
-      <div v-else class="table-actions">
-        <div class="table-filter">
-          <select v-model="statusFilter" class="filter-select">
-            <option value="all">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Accepted">Accepted</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
-        </div>
-        <div class="table-search">
-          <div class="search-input-wrapper">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <input type="text" v-model="searchQuery" placeholder="Search patients, notes..." class="search-input">
+      <!-- Bookings Table -->
+      <div v-else class="table-responsive">
+        <!-- Table Actions (Filters & Search) -->
+        <div class="table-actions">
+          <div class="table-filter">
+            <select v-model="statusFilter" class="filter-select">
+              <option value="all">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div class="table-search">
+            <div class="search-input-wrapper">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="search-icon">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+              <input type="text" v-model="searchQuery" placeholder="Search patients, notes..." class="search-input">
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- Filtered Empty State -->
-      <div v-if="bookings.length > 0 && filteredBookings.length === 0" class="empty-state">
-        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-        </svg>
-        <p>No appointments match your filters</p>
-        <button class="btn-link" @click="resetFilters">Reset filters</button>
-      </div>
+        <!-- Filtered Empty State -->
+        <div v-if="filteredBookings.length === 0" class="empty-state">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <p>No appointments match your filters</p>
+          <button class="btn-link" @click="resetFilters">Reset filters</button>
+        </div>
 
-      <!-- Bookings Table -->
-      <div v-else-if="bookings.length > 0" class="table-responsive">
-        <table>
+        <!-- Table with Data -->
+        <table v-else>
           <thead>
           <tr>
             <th>Patient</th>
@@ -144,9 +146,9 @@
 
             <!-- Status -->
             <td>
-                <span :class="['status-badge', getStatusClass(booking.fields.Status?.stringValue)]">
-                  {{ booking.fields.Status?.stringValue }}
-                </span>
+          <span :class="['status-badge', getStatusClass(booking.fields.Status?.stringValue)]">
+            {{ booking.fields.Status?.stringValue }}
+          </span>
             </td>
 
             <!-- Notes -->
@@ -171,20 +173,20 @@
                 <button @click="acceptBooking(booking.fields.BID?.stringValue)" class="btn-accept" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
                   <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
                   <span v-else>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    </span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </span>
                   Accept
                 </button>
                 <button @click="rejectBooking(booking.fields.BID?.stringValue)" class="btn-reject" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
                   <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
                   <span v-else>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                      </svg>
-                    </span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </span>
                   Reject
                 </button>
               </div>
@@ -194,22 +196,22 @@
                 <button @click="completeBooking(booking.fields.BID?.stringValue)" class="btn-complete" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
                   <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
                   <span v-else>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                      </svg>
-                    </span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+              </span>
                   Complete
                 </button>
                 <button @click="cancelBooking(booking.fields.BID?.stringValue)" class="btn-cancel" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
                   <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
                   <span v-else>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="15" y1="9" x2="9" y2="15"></line>
-                        <line x1="9" y1="9" x2="15" y2="15"></line>
-                      </svg>
-                    </span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="15" y1="9" x2="9" y2="15"></line>
+                  <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+              </span>
                   Cancel
                 </button>
               </div>
@@ -228,12 +230,12 @@
         </table>
       </div>
     </section>
-
-    <!-- Schedule Section -->
+<!--
+    &lt;!&ndash; Schedule Section &ndash;&gt;
     <section class="schedule-section">
       <h2>Your Schedule</h2>
       <div class="calendar-wrapper">
-        <!-- Calendar placeholder - would integrate with a calendar component -->
+        &lt;!&ndash; Calendar placeholder - would integrate with a calendar component &ndash;&gt;
         <div class="calendar-placeholder">
           <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
@@ -245,7 +247,7 @@
           <p class="hint-text">You'll be able to view your appointments in a calendar format</p>
         </div>
       </div>
-    </section>
+    </section>-->
 
     <!-- Analytics Section -->
     <section class="analytics-section">
@@ -721,9 +723,11 @@ export default {
 
     setActionProcessing(bookingId, isProcessing) {
       if (isProcessing) {
-        this.$set(this.processingActions, bookingId, true);
+        // Using standard object assignment which works with Vue 3 reactivity
+        this.processingActions[bookingId] = true;
       } else {
-        this.$delete(this.processingActions, bookingId);
+        // Delete operator works directly in Vue 3
+        delete this.processingActions[bookingId];
       }
     },
 
@@ -881,7 +885,7 @@ export default {
 </script>
 
 <style scoped>
-:root {
+.booking-container {
   --primary: #4361ee;
   --primary-light: #edf2ff;
   --secondary: #3a0ca3;

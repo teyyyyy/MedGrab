@@ -17,7 +17,8 @@
   <div>
     <nav v-if="isAuthenticated">
       <router-link to="/report" v-if="isNurse">Reports</router-link>
-      <router-link to="/booking" v-if="isPatient">Bookings</router-link>
+      <router-link to="/bookingcreator" v-if="isPatient">Bookings</router-link>
+      <router-link to="/bookingmanager" v-if="isNurse">Bookings</router-link>
       <button @click="logout">Logout</button>
     </nav>
     <router-view />
