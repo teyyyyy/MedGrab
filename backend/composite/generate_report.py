@@ -82,6 +82,20 @@ def get_bookings_for_month(nid, year, month):
     except requests.RequestException as e:
         print(f"Error in get_bookings_for_month: {e}")
         return []
+    
+def calculate_earnings(bookings):
+    """Calculate total earnings from completed bookings"""
+    total_earned = 0.0
+    for booking in bookings:
+        fields = booking.get('fields', {})
+        status = fields.get('Status', {}).get('stringValue', '').lower()
+        if status == 'completed':
+            payment = fields.get('PaymentAmt', {}).get('doubleValue', 0.0)
+            try:
+                total_earned += float(payment)
+            except (ValueError, TypeError):
+                pass
+    return total_earned
 
 def calculate_hours_worked(bookings):
     """Calculate total hours worked from bookings"""
@@ -201,6 +215,7 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
     total_bookings = len(bookings)
     completed_bookings = sum(1 for b in bookings if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'completed')
     cancelled_bookings = sum(1 for b in bookings if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled')
+    total_earned = calculate_earnings(bookings)
     
     cancellation_rate = (cancelled_bookings / total_bookings * 100) if total_bookings > 0 else 0
     avg_session = hours_worked / completed_bookings if completed_bookings > 0 else 0
@@ -269,6 +284,7 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
         f'<p>Cancelled Sessions: <span class="{"warning" if cancelled_bookings > 2 else ""}">{cancelled_bookings}</span></p>',
         f'<p>Cancellation Rate: <span class="{"warning" if cancellation_rate > 30 else ""}">{cancellation_rate:.1f}%</span></p>',
         f'<p>Total Hours Worked: <span class="{"warning" if hours_worked > 60 else ""}">{hours_worked:.1f} hours</span></p>',
+        f'<p>Total Earnings: ${total_earned:.2f}</p>',  
         f'<p>Average Session Duration: {avg_session:.1f} hours</p>',
         f'<p>Current Credit Score: <span class="{"warning" if credit_score < 40 else "good" if credit_score > 80 else ""}">{credit_score}</span></p>',
         '</div>'
@@ -343,6 +359,7 @@ async def _generate_monthly_report(nid, month):
     print(f"Bookings retrieved: {len(bookings)}")
     
     hours_worked, completed_bookings = calculate_hours_worked(bookings)
+    total_earned = calculate_earnings(bookings)
     cancelled_bookings = sum(1 for b in bookings if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled')
     total_bookings = len(bookings) if bookings else 0
     cancellation_rate = (cancelled_bookings / total_bookings * 100) if total_bookings > 0 else 0
@@ -369,6 +386,7 @@ async def _generate_monthly_report(nid, month):
             <h3>Quick Summary:</h3>
             <ul>
                 <li><strong>Total Hours Worked:</strong> {hours_worked:.1f} hours</li>
+                <li><strong>Total Earnings:</strong> ${total_earned:.2f}</li>  <!-- NEW LINE -->
                 <li><strong>Cancelled Bookings:</strong> {cancelled_bookings} ({cancellation_rate:.1f}% cancellation rate)</li>
                 <li><strong>Current Credit Score:</strong> {nurse_data.get('creditScore', 100)}</li>
             </ul>
@@ -403,6 +421,7 @@ async def _generate_monthly_report(nid, month):
         "month": month,
         "nurseId": nid,
         "hours": hours_worked,
+        "earnings": total_earned,
         "totalBookings": total_bookings,
         "cancellationRate": cancellation_rate
     }
@@ -424,6 +443,7 @@ type_defs = gql("""
         month: String
         nurseId: ID
         hours: Float
+        earnings: Float  # NEW FIELD
         totalBookings: Int
         cancellationRate: Float
         isWarned: Boolean
