@@ -26,6 +26,7 @@ REPORT_SERVICE_URL= environ.get('REPORT_SERVICE_URL')
 
 generate_report_bp = Blueprint('generate_report', __name__)
 
+
 def generate_pdf_report(html_content):
     """Convert HTML report to PDF"""
     pdf_buffer = BytesIO()
@@ -82,6 +83,7 @@ def get_bookings_for_month(nid, year, month):
     except requests.RequestException as e:
         print(f"Error in get_bookings_for_month: {e}")
         return []
+
     
 def calculate_earnings(bookings):
     """Calculate total earnings from completed bookings"""
@@ -231,18 +233,31 @@ def generate_report_content(nid, month_str, bookings, hours_worked, nurse_data):
         fields = b.get('fields', {})
         status = fields.get('Status', {}).get('stringValue', 'Unknown').lower()
         
-        start_time = fields.get('StartTime', {}).get('timestampValue', '')
-        end_time = fields.get('EndTime', {}).get('timestampValue', '')
+        start_time_str = fields.get('StartTime', {}).get('timestampValue', '')
+        end_time_str = fields.get('EndTime', {}).get('timestampValue', '')
         
-        date_part = start_time.split('T')[0] if start_time else 'N/A'
-        time_part = start_time.split('T')[1].split('.')[0] if start_time else 'N/A'
+        # Parse and format the date/time
+        try:
+            if start_time_str:
+                start_time = datetime.datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                # Convert to UTC+8 (Singapore time)
+                start_time = start_time.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+                date_part = start_time.strftime('%d %B %Y')  # "05 April 2025"
+                time_part = start_time.strftime('%H:%M')      # "00:45"
+            else:
+                date_part = 'N/A'
+                time_part = 'N/A'
+        except (ValueError, TypeError):
+            date_part = 'Invalid Date'
+            time_part = 'Invalid Time'
         
+        # Calculate duration
         duration = 0.0
-        if start_time and end_time:
+        if start_time_str and end_time_str:
             try:
-                start = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                end = datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
-                duration = (end - start).total_seconds() / 3600
+                start = datetime.datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                end = datetime.datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                duration = (end - start).total_seconds() / 3600  # in hours
             except ValueError:
                 pass
         
@@ -433,7 +448,13 @@ type_defs = gql("""
     }
     
     type Mutation {
-        generateReport(nurseId: ID!, month: String!): ReportResult!
+        generateReport(
+            nurseId: ID!
+            month: String!
+            includeHours: Boolean = true
+            includeEarnings: Boolean = true
+            includeBookings: Boolean = false
+        ): ReportResult!
     }
     
     type ReportResult {
@@ -443,11 +464,19 @@ type_defs = gql("""
         month: String
         nurseId: ID
         hours: Float
-        earnings: Float  # NEW FIELD
+        earnings: Float
         totalBookings: Int
         cancellationRate: Float
         isWarned: Boolean
         isSuspended: Boolean
+        bookings: [Booking]
+    }
+
+    type Booking {
+        date: String!
+        status: String!
+        duration: Float!
+        payment: Float
     }
 """)
 
@@ -460,12 +489,37 @@ def resolve_ping(*_):
     return "GraphQL Report Service is running!"
 
 @mutation.field("generateReport")
-async def resolve_generate_report(*_, nurseId, month):
+async def resolve_generate_report(_, info, nurseId, month, **kwargs):
     try:
-        result = await _generate_monthly_report(nurseId, month)
-        return result
+        # First generate the full report (including email sending)
+        full_result = await _generate_monthly_report(nurseId, month)
+        if not full_result["success"]:
+            return full_result
+
+        # Then filter based on requested fields
+        include_hours = kwargs.get("includeHours", True)
+        include_earnings = kwargs.get("includeEarnings", True)
+        include_bookings = kwargs.get("includeBookings", False)
+
+        response = {
+            "success": True,
+            "message": full_result["message"],
+            "month": full_result["month"],
+            "nurseId": full_result["nurseId"],
+            "cancellationRate": full_result["cancellationRate"]
+        }
+
+        if include_hours:
+            response["hours"] = full_result["hours"]
+        if include_earnings:
+            response["earnings"] = full_result["earnings"]
+        if include_bookings:
+            # You'll need to modify _generate_monthly_report to return bookings
+            response["bookings"] = []  # Add actual bookings data here
+
+        return response
+
     except Exception as e:
-        print(f"Error in resolve_generate_report: {e}")
         return {"success": False, "message": str(e)}
 
 # Create executable schema
@@ -473,16 +527,6 @@ schema = make_executable_schema(type_defs, query, mutation)
 
 # Create GraphQL app
 graphql_app = GraphQL(schema)
-
-# Keep the existing REST endpoint for compatibility if needed
-# @generate_report_bp.route("/generate/<nid>/<month>", methods=["POST"])
-# async def generate_report_rest(nid, month):
-#     try:
-#         result = await _generate_monthly_report(nid, month)
-#         return jsonify(result)
-#     except Exception as e:
-#         print(f"Error in generate_report_rest: {e}")
-#         return jsonify({"success": False, "message": str(e)}), 500
 
 # Add the GraphQL endpoint
 @generate_report_bp.route("/graphql", methods=["GET", "POST"])
