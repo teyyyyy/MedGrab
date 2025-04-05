@@ -423,6 +423,39 @@
       </div>
     </div>
 
+    <div v-if="showCancellationModal" class="modal-overlay" @click="closeCancellationModal">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h3>Cancellation Reason</h3>
+          <button class="btn-close" @click="closeCancellationModal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-warning">Oi! You better have a bleedin' good excuse!</p>
+          <p>This cancellation will be tracked and the patient will see your reason:</p>
+          <textarea
+              v-model="cancellationReason"
+              class="cancellation-reason-input"
+              placeholder="Tell us why you're cancelling this appointment..."
+              rows="4"
+          ></textarea>
+        </div>
+        <div class="modal-footer">
+          <button @click="closeCancellationModal" class="btn-secondary">
+            Nevermind
+          </button>
+          <button @click="submitCancellationWithReason" class="btn-submit" :disabled="!cancellationReason.trim() || isActionProcessing(selectedBookingId)">
+            <span v-if="isActionProcessing(selectedBookingId)" class="input-loader"></span>
+            Submit & Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Action Status Toast -->
     <div v-if="actionMessage" :class="['action-toast', actionSuccess ? 'success-toast' : 'error-toast']">
       <span v-if="actionSuccess" class="toast-icon">
@@ -466,6 +499,10 @@ export default {
       isLoadingBookings: false,
       isLoadingNurses: false,
       isLoadingPatients: false,
+
+      showCancellationModal: false,
+      cancellationReason: '',
+      selectedBookingId: null,
 
       // Data stores
       bookings: [],
@@ -648,25 +685,40 @@ export default {
     },
 
     cancelBooking(bid) {
-      this.setActionProcessing(bid, true);
+      this.selectedBookingId = bid;
+      this.cancellationReason = '';
+      this.showCancellationModal = true;
+    },
+    closeCancellationModal() {
+      this.showCancellationModal = false;
+      this.cancellationReason = '';
+      this.selectedBookingId = null;
+    },
+    submitCancellationWithReason() {
+      if (!this.cancellationReason.trim()) {
+        this.showActionMessage("Oi! Give us a proper reason, ya mug!", false);
+        return;
+      }
+
+      this.setActionProcessing(this.selectedBookingId, true);
 
       const data = {
-        bid: bid,
-        APIKey: '' // Set your API key if needed
+        bid: this.selectedBookingId,
+        reason: this.cancellationReason
       };
 
-      axios.post('http://localhost:5008/v1/CancelBooking', data)
+      axios.post('http://localhost:5008/v1/CancelWithReason', data)
           .then(() => {
-            this.showActionMessage("Appointment cancelled successfully!", true);
+            this.showActionMessage("Sorted! Appointment cancelled and reassigned.", true);
             this.getBookings();
-            this.closeModal();
+            this.closeCancellationModal();
           })
           .catch(error => {
-            console.error("Error cancelling booking:", error);
-            this.showActionMessage("Error cancelling appointment. Please try again.", false);
+            console.error("Error cancelling booking with reason:", error);
+            this.showActionMessage("Bloody 'ell! Something went wrong. Try again!", false);
           })
           .finally(() => {
-            this.setActionProcessing(bid, false);
+            this.setActionProcessing(this.selectedBookingId, false);
           });
     },
 
@@ -1959,5 +2011,28 @@ tr:hover {
     left: 16px;
     right: 16px;
   }
+}
+.cancellation-reason-input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--neutral-300);
+  border-radius: 6px;
+  font-size: 14px;
+  resize: vertical;
+  margin-top: 8px;
+}
+
+.cancellation-reason-input:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.2);
+}
+
+.modal-warning {
+  color: var(--danger);
+  font-weight: 600;
+  border-left: 3px solid var(--danger);
+  padding-left: 12px;
+  margin-bottom: 16px;
 }
 </style>

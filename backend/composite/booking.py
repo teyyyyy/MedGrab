@@ -391,6 +391,16 @@ class BookingService:
 
         return response
 
+    async def cancel_with_reason(self, booking_id: str, reason: str) -> Dict:
+        """Cancel a booking with a reason."""
+        url = f"{self.base_url}CancelWithReason/{booking_id}"
+        response = await HttpClient.post(url, {"APIKey": self.api_key, "Reason": reason})
+
+        if response.get("StatusCode") != 200:
+            raise ApiError(response.get("Message", "Unknown error"), response.get("StatusCode", 500))
+
+        return response
+
 
 class BookingManager:
     """Manager class for booking operations that coordinates between services."""
@@ -584,6 +594,143 @@ class BookingManager:
             'new_nurse_id': new_nurse_id
         }
 
+    async def cancel_with_reason_and_reassign(self, booking_id: str, reason: str) -> Dict:
+        """Cancel a booking with reason and create a new booking with another nurse."""
+        # Get booking details
+        booking_result = await self.booking_service.get_booking(booking_id)
+        booking_data = booking_result.get('Booking', {})
+
+        # Extract fields
+        fields = booking_data.get('fields', {})
+        current_nurse_id = fields.get('NID', {}).get('stringValue')
+        patient_id = fields.get('PID', {}).get('stringValue')
+        start_time = fields.get('StartTime', {}).get('timestampValue', '')
+        end_time = fields.get('EndTime', {}).get('timestampValue', '')
+        payment_amt = fields.get('PaymentAmt', {}).get('doubleValue', 0)
+        notes = fields.get('Notes', {}).get('stringValue', '')
+
+        if not current_nurse_id or not patient_id:
+            raise ApiError('Missing nurse or patient ID in booking data', 400)
+
+        # Cancel the current booking with reason
+        await self.booking_service.cancel_with_reason(booking_id, reason)
+
+        # Get all nurses and find a new one
+        all_nurses = await self.nurse_service.get_all_nurses()
+        available_nurses = [nurse for nurse in all_nurses if nurse.get('NID') != current_nurse_id]
+
+        if not available_nurses:
+            raise ApiError('No other nurses available for reassignment', 400)
+
+        # Choose a random nurse
+        new_nurse = random.choice(available_nurses)
+        new_nurse_id = new_nurse.get('NID')
+
+        # Create a new booking with the new nurse
+        new_booking_data = {
+            'NID': new_nurse_id,
+            'PID': patient_id,
+            'StartTime': start_time,
+            'EndTime': end_time,
+            'PaymentAmt': payment_amt,
+            'Notes': notes
+        }
+
+        new_booking_result = await self.booking_service.create_booking(new_booking_data)
+        new_booking_id = new_booking_result.get('BookingId', '')
+
+        # Get patient details
+        patient_data = await self.patient_service.get_patient(patient_id)
+        patient = patient_data.get('patient', {})
+
+        # Get current nurse details
+        current_nurse = await self.nurse_service.get_nurse(current_nurse_id)
+
+        # Create notifications
+        new_nurse_name = new_nurse.get('name', 'Nurse')
+        new_nurse_email = new_nurse.get('email', '')
+        patient_name = patient.get('PatientName', 'Patient')
+        patient_email = patient.get('Email', '')
+        current_nurse_name = current_nurse.get('name', 'Nurse')
+        current_nurse_email = current_nurse.get('email', '')
+        location = patient.get('Location', 'Unknown')
+
+        # Notification to the current nurse about cancellation
+        current_nurse_notification = f"""
+        <html>
+        <body>
+            <p>Hello {current_nurse_name},</p>
+            <p>Your booking with patient {patient_name} has been cancelled with the following reason:</p>
+            <p><em>"{reason}"</em></p>
+            <hr>
+            <h3>Cancelled Booking Details:</h3>
+            <ul>
+                <li><strong>Patient:</strong> {patient_name}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Location:</strong> {location}</li>
+            </ul>
+            <p>This cancellation has been recorded in your profile.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Notification to the new nurse
+        new_nurse_notification = NotificationService.create_new_nurse_reassigned_notification(
+            new_nurse_name, patient_name, start_time, end_time, location, notes
+        )
+
+        # Notification to the patient
+        patient_notification = f"""
+        <html>
+        <body>
+            <p>Hello {patient_name},</p>
+            <p>Your booking with {current_nurse_name} has been cancelled with the following reason:</p>
+            <p><em>"{reason}"</em></p>
+            <p>However, we have automatically reassigned you to a new nurse: {new_nurse_name}.</p>
+            <hr>
+            <h3>Updated Booking Details:</h3>
+            <ul>
+                <li><strong>New Nurse:</strong> {new_nurse_name}</li>
+                <li><strong>Start time:</strong> {start_time}</li>
+                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Notes:</strong> {notes}</li>
+            </ul>
+            <p>Your new nurse will confirm this booking shortly.</p>
+            <p>Best Regards,<br>MedGrab Team</p>
+        </body>
+        </html>
+        """
+
+        # Send notifications
+        if current_nurse_email:
+            await send_notification_amqp(
+                current_nurse_email,
+                "Booking Cancelled",
+                current_nurse_notification
+            )
+
+        if new_nurse_email:
+            await send_notification_amqp(
+                new_nurse_email,
+                "New booking assigned to you",
+                new_nurse_notification
+            )
+
+        if patient_email:
+            await send_notification_amqp(
+                patient_email,
+                "Your booking has been reassigned",
+                patient_notification
+            )
+
+        return {
+            'message': 'Booking cancelled with reason and reassigned',
+            'new_booking_id': new_booking_id,
+            'new_nurse_id': new_nurse_id
+        }
+
 
 # Create Flask app and blueprint
 app = Flask(__name__)
@@ -714,6 +861,53 @@ async def reject_booking():
             status_code=500
         ))
 
+
+@booking_bp.route('/CancelWithReason', methods=['POST'])
+@async_route
+async def cancel_with_reason():
+    """Endpoint to cancel a booking with reason and reassign it to another nurse."""
+    try:
+        data = request.json
+        logger.info(f"Received cancel with reason request: {data}")
+
+        booking_id = data.get('bid')
+        reason = data.get('reason')
+
+        if not booking_id:
+            return jsonify(api_response(
+                success=False,
+                error='Missing booking ID (bid)',
+                status_code=400
+            ))
+
+        if not reason:
+            return jsonify(api_response(
+                success=False,
+                error='Missing cancellation reason',
+                status_code=400
+            ))
+
+        # Process booking cancellation with reason and reassignment
+        result = await booking_manager.cancel_with_reason_and_reassign(booking_id, reason)
+
+        return jsonify(api_response(
+            success=True,
+            **result
+        ))
+
+    except ApiError as e:
+        return jsonify(api_response(
+            success=False,
+            error=e.message,
+            status_code=e.status_code
+        ))
+    except Exception as e:
+        logger.error(f"Error in cancel_with_reason: {str(e)}")
+        return jsonify(api_response(
+            success=False,
+            error='Internal server error',
+            status_code=500
+        ))
 
 # Register blueprint
 app.register_blueprint(booking_bp)
