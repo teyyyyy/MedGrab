@@ -2,6 +2,7 @@ import aio_pika
 import os
 import asyncio
 import json
+import base64
 
 # AMQP configurations
 AMQP_HOST = os.getenv('AMQP_HOST', 'medgrab-rabbitmq')  
@@ -51,7 +52,7 @@ async def close_amqp():
         await amqp_connection.close()
         print("AMQP connection closed")
 
-async def send_notification_amqp(to_email, subject, message):
+async def send_notification_amqp(to_email, subject, message, attachment=None, attachment_name="report.pdf"):
     """Send a notification via AMQP."""
     global amqp_connection, amqp_channel, exchange
     
@@ -64,6 +65,15 @@ async def send_notification_amqp(to_email, subject, message):
         "subject": subject,
         "message": message
     }
+    
+    # Add attachment if provided
+    if attachment:
+        if isinstance(attachment, str):
+            # If attachment is a file path
+            with open(attachment, 'rb') as f:
+                attachment = f.read()
+        notification_data["attachment"] = base64.b64encode(attachment).decode('utf-8')
+        notification_data["attachment_name"] = attachment_name
     
     # Convert the notification data to JSON string
     json_message = json.dumps(notification_data)

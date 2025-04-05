@@ -7,6 +7,9 @@ from flask import Flask, request, Blueprint
 from ariadne import QueryType, MutationType, gql, make_executable_schema
 from ariadne.asgi import GraphQL
 from flask_cors import CORS
+from io import BytesIO
+from xhtml2pdf import pisa
+import base64
 
 app = Flask(__name__)
 CORS(app)
@@ -22,6 +25,18 @@ REPORT_SERVICE_URL= environ.get('REPORT_SERVICE_URL')
 
 
 generate_report_bp = Blueprint('generate_report', __name__)
+
+def generate_pdf_report(html_content):
+    """Convert HTML report to PDF"""
+    pdf_buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(html_content, dest=pdf_buffer)
+    
+    if pisa_status.err:
+        print("Error generating PDF")
+        return None
+    
+    pdf_buffer.seek(0)
+    return pdf_buffer.getvalue()
 
 # Helper functions
 def get_nurse_details(nid):
@@ -325,72 +340,33 @@ async def _generate_monthly_report(nid, month):
     nurse_name = nurse_data.get('name')
     year, month_num = map(int, month.split('-'))
     bookings = get_bookings_for_month(nid, year, month_num)
-    hours_worked, _ = calculate_hours_worked(bookings)
+    print(f"Bookings retrieved: {len(bookings)}")
+    
+    hours_worked, completed_bookings = calculate_hours_worked(bookings)
     cancelled_bookings = sum(1 for b in bookings if b.get('fields', {}).get('Status', {}).get('stringValue', '').lower() == 'cancelled')
     total_bookings = len(bookings) if bookings else 0
     cancellation_rate = (cancelled_bookings / total_bookings * 100) if total_bookings > 0 else 0
     
-    # Simplified suspension logic:
-    if nurse_data.get('isSuspended', False):
-        try:
-            response = requests.put(f"{NURSE_SERVICE_URL}/{nid}", json={
-                'isSuspended': False,
-                'suspensionEndDate': None,
-                'creditScore': 50
-            })
-            if response.status_code == 200:
-                nurse_data['isSuspended'] = False
-                nurse_data['suspensionEndDate'] = None
-                nurse_data['creditScore'] = 50
-                print(f"Suspension reset for nurse {nid} during monthly report generation")
-        except requests.RequestException as e:
-            print(f"Error resetting suspension status: {e}")
-    else:
-        status_result = check_nurse_status(nid)
-        if status_result and status_result.get('success'):
-            nurse_data['isWarned'] = status_result.get('isWarned', False)
-            nurse_data['isSuspended'] = status_result.get('isSuspended', False)
-            nurse_data['suspensionEndDate'] = status_result.get('suspensionEndDate')
-    
+    # Generate report content
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
     
+    # Store report in database
     store_result = store_report(nid, month, report_content, hours_worked, total_bookings)
     
     if nurse_email:
         subject = f"Your MedGrab Monthly Report - {datetime.datetime.strptime(month, '%Y-%m').strftime('%B %Y')}"
-        formatted_suspension_end = format_date(nurse_data.get('suspensionEndDate'))
         
-        warning_message = ""
-        if nurse_data.get('isWarned', False) and not nurse_data.get('isSuspended', False):
-            warning_message = """
-            <div style="margin-top: 20px; padding: 10px; background-color: #fff3cd; border-left: 5px solid #ffc107; color: #856404;">
-                <h3 style="margin-top: 0;">⚠️ Credit Score Warning</h3>
-                <p>Your credit score has dropped to {credit_score}, which is below our warning threshold of 30.</p>
-                <p>Please be careful about cancellations to avoid account suspension.</p>
-            </div>
-            """.format(credit_score=nurse_data.get('creditScore', 0))
-            
-        suspension_message = ""
-        if nurse_data.get('isSuspended', False) and nurse_data.get('suspensionEndDate'):
-            suspension_message = """
-            <div style="margin-top: 20px; padding: 10px; background-color: #f8d7da; border-left: 5px solid #dc3545; color: #721c24;">
-                <h3 style="margin-top: 0;">🚫 Account Suspension Notice</h3>
-                <p>Due to your credit score falling below the critical threshold of 20, your account has been suspended until {suspension_end}.</p>
-                <p>During this period, you will not be shown in the nurse pool for new bookings.</p>
-            </div>
-            """.format(suspension_end=formatted_suspension_end)
+        # Generate PDF
+        pdf_content = generate_pdf_report(report_content) if report_content else None
         
+        # Create email message
         message = f"""
         <html>
         <body>
             <p>Hi {nurse_name},</p>
-            <p>Your monthly activity report is now available.</p>
-            <!-- Remove the link and include the actual report content -->
-            <div style="margin: 20px 0;">
-                {report_content}  <!-- This is the HTML report content -->
-            </div>
-            <hr>
-            <h3>Summary:</h3>
+            <p>Your monthly activity report for {datetime.datetime.strptime(month, '%Y-%m').strftime('%B %Y')} is attached.</p>
+            
+            <h3>Quick Summary:</h3>
             <ul>
                 <li><strong>Total Hours Worked:</strong> {hours_worked:.1f} hours</li>
                 <li><strong>Cancelled Bookings:</strong> {cancelled_bookings} ({cancellation_rate:.1f}% cancellation rate)</li>
@@ -400,29 +376,35 @@ async def _generate_monthly_report(nid, month):
             {'<p style="color:red;"><strong>⚠️ High Workload Warning:</strong> You have worked over 60 hours this month. Please take care of your well-being.</p>' if hours_worked > 60 else ''}
             {'<p style="color:red;"><strong>⚠️ High Cancellation Rate:</strong> Your cancellation rate exceeds 30%. This affects your reliability score.</p>' if cancellation_rate > 30 else ''}
             
-            {warning_message}
-            {suspension_message}
-            
+            <p>Please find the detailed report attached as a PDF.</p>
             <p>Thank you for your service.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
         """
         
-        notification_result = await send_notification_amqp(nurse_email, subject, message)
+        # Prepare notification data
+        notification_data = {
+            "to_email": nurse_email,
+            "subject": subject,
+            "message": message
+        }
+
+        if pdf_content:
+            notification_data["attachment"] = pdf_content
+            notification_data["attachment_name"] = f"MedGrab_Report_{month}.pdf"
+
+        notification_result = await send_notification_amqp(**notification_data)
         print(f"Notification result: {notification_result}")
     
-    print(f"Report generation completed successfully")
     return {
         "success": True, 
-        "message": "Report generated and email queued for delivery.",
+        "message": "Report generated successfully",
         "month": month,
         "nurseId": nid,
         "hours": hours_worked,
         "totalBookings": total_bookings,
-        "cancellationRate": cancellation_rate,
-        "isWarned": nurse_data.get('isWarned', False),
-        "isSuspended": nurse_data.get('isSuspended', False)
+        "cancellationRate": cancellation_rate
     }
 
 # Define GraphQL schema

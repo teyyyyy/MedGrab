@@ -117,6 +117,26 @@ services:
       - AMQP_EXCHANGE_TYPE=topic
       - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
       - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
+      - REPORT_SERVICE_URL=http://report_service:5004/api/reports
+    depends_on:
+      - rabbitmq
+    networks:
+      - medgrab_network
+
+  booking_composite:
+    build:
+      context: .
+      dockerfile: composite/bookcomp.Dockerfile
+    container_name: medgrab_booking_service
+    ports:
+      - "5008:5008"
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
+      - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
       - REPORT_SERVICE_URL=http://report_servicee:5004/api/reports
     depends_on:
       - rabbitmq

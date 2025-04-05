@@ -35,7 +35,8 @@ const routes = [
   {
     path: '/',
     name: 'Login',
-    component: Login
+    component: Login,
+    meta: { requiresAuth: false }
   },
   {
     path: '/report',
@@ -71,7 +72,7 @@ router.beforeEach((to, from, next) => {
     if (!isAuthenticated) {
       next('/')
     } else if (to.meta.requiresNurse && userRole !== 'nurse') {
-      next('/booking') // or show error
+      next('/bookingcreator') // or show error
     } else if (to.meta.requiresPatient && userRole !== 'patient') {
       next('/report') // or show error
     } else {

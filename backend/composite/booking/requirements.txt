@@ -1,6 +1,0 @@
-flask
-flask-cors
-flask[async]
-requests
-pika
-aio_pika
