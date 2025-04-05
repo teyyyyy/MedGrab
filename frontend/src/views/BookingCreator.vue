@@ -452,6 +452,11 @@ export default {
       isLoadingPatients: false,
       isCreatingBooking: false,
       isAcceptingBooking: false,
+      isProcessingPayment: false,
+      paymentSessionId: null,
+      tempBookingId: null,
+      paymentWindow: null,
+      paymentCheckInterval: null,
       newBooking: {
         PID: '',
         NID: '',
@@ -478,6 +483,171 @@ export default {
     }
   },
   methods: {
+    createStripePayment() {
+      this.isProcessingPayment = true;
+      this.createMessage = "Creating payment link...";
+
+      // Generate temporary booking ID if not already set
+      if (!this.tempBookingId) {
+        this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
+      }
+
+      const paymentData = {
+        amount: this.newBooking.PaymentAmt,
+        booking_id: this.tempBookingId,
+        patient_id: this.selectedPatient.PID,
+        nurse_id: this.selectedNurse.NID
+      };
+
+      axios.post('http://localhost:5010/create-payment-link', paymentData)
+          .then(response => {
+            if (response.data.success) {
+              // Store the session ID for later verification
+              this.paymentSessionId = response.data.session_id;
+
+              // Open payment in a popup window we can control
+              const width = 550;
+              const height = 650;
+              const left = (window.screen.width / 2) - (width / 2);
+              const top = (window.screen.height / 2) - (height / 2);
+
+              this.paymentWindow = window.open(
+                  response.data.payment_url,
+                  'stripe_checkout',
+                  `width=${width},height=${height},top=${top},left=${left},toolbar=no,location=no,status=no,menubar=no`
+              );
+
+              // Add message listener for payment completion
+              window.addEventListener('message', this.handlePaymentMessage);
+
+              // Set interval just to check if window was closed manually
+              this.paymentCheckInterval = setInterval(() => {
+                if (this.paymentWindow && this.paymentWindow.closed) {
+                  clearInterval(this.paymentCheckInterval);
+                  this.onPaymentWindowClosed();
+                }
+              }, 500);
+
+              this.createMessage = "Payment window opened. Complete your payment to finalize booking.";
+            } else {
+              this.createMessage = "Error creating payment link. Please try again.";
+              this.createSuccess = false;
+              this.isProcessingPayment = false;
+            }
+          })
+          .catch(error => {
+            console.error("Error creating Stripe payment:", error);
+            this.createMessage = "Payment service error. Please try again.";
+            this.createSuccess = false;
+            this.isProcessingPayment = false;
+          });
+    },
+    handlePaymentMessage(event) {
+      // Ignore messages from unknown sources
+      if (!event.data || !event.data.type) return;
+
+      // Handle payment completion
+      if (event.data.type === 'PAYMENT_COMPLETED') {
+        // Clean up
+        window.removeEventListener('message', this.handlePaymentMessage);
+        if (this.paymentCheckInterval) {
+          clearInterval(this.paymentCheckInterval);
+        }
+
+        // Set session ID and process payment
+        this.paymentSessionId = event.data.sessionId;
+        this.createMessage = "Payment successful! Verifying...";
+        this.createSuccess = true;
+
+        // Check payment status
+        this.checkPaymentStatus();
+      }
+
+      // Handle payment cancellation
+      if (event.data.type === 'PAYMENT_CANCELLED') {
+        // Clean up
+        window.removeEventListener('message', this.handlePaymentMessage);
+        if (this.paymentCheckInterval) {
+          clearInterval(this.paymentCheckInterval);
+        }
+
+        this.createMessage = "Payment was cancelled. Please try again.";
+        this.createSuccess = false;
+        this.isProcessingPayment = false;
+      }
+    },
+    onPaymentWindowClosed() {
+      // Clean up
+      window.removeEventListener('message', this.handlePaymentMessage);
+      if (this.paymentCheckInterval) {
+        clearInterval(this.paymentCheckInterval);
+      }
+
+      // If we're still processing and didn't get a message
+      if (this.isProcessingPayment) {
+        // Set a message and reset state
+        this.createMessage = "Payment window closed. Please try again if your payment wasn't completed.";
+        this.createSuccess = false;
+        this.isProcessingPayment = false;
+      }
+    },
+    checkPaymentStatus() {
+      if (!this.paymentSessionId) {
+        this.isProcessingPayment = false;
+        return;
+      }
+
+      this.createMessage = "Verifying payment status...";
+
+      axios.get(`http://localhost:5010/payment-status/${this.paymentSessionId}`)
+          .then(response => {
+            if (response.data.success && response.data.payment_status === 'paid') {
+              // Payment succeeded, finalize the booking
+              this.createSuccess = true;
+              this.createMessage = "Payment successful! Creating your booking...";
+              this.finalizeBooking();
+            } else {
+              // Payment not successful or still pending
+              this.createMessage = "Payment not completed. Please try again.";
+              this.createSuccess = false;
+              this.isProcessingPayment = false;
+            }
+          })
+          .catch(error => {
+            console.error("Error checking payment status:", error);
+            this.createMessage = "Error verifying payment. Please contact support.";
+            this.createSuccess = false;
+            this.isProcessingPayment = false;
+          });
+    },
+    finalizeBooking() {
+      // Set the booking ID from our temp ID
+      this.newBooking.BID = this.tempBookingId;
+
+      axios.post(
+          'http://localhost:5008/v1/MakeBooking',
+          this.newBooking
+      )
+          .then(() => {
+            this.createMessage = "Success! Your appointment has been booked and payment confirmed.";
+            this.createSuccess = true;
+            this.getBookings();
+
+            // Reset form and payment data
+            this.resetForm();
+            this.paymentSessionId = null;
+            this.tempBookingId = null;
+          })
+          .catch(error => {
+            console.error("Error creating booking:", error);
+            this.createMessage = "Payment was successful but there was an error creating the booking. Please contact support with reference: " + this.paymentSessionId;
+            this.createSuccess = false;
+          })
+          .finally(() => {
+            this.isCreatingBooking = false;
+            this.isProcessingPayment = false;
+          });
+    },
     formatDateTime(timestamp) {
       if (!timestamp) return 'N/A';
 
@@ -680,38 +850,21 @@ export default {
     createBooking() {
       this.isCreatingBooking = true;
       this.createMessage = '';
-      this.newBooking.PID = this.selectedPatient.PID
-      this.newBooking.NID = this.selectedNurse.NID
 
-      axios
-          .post(
-              'http://localhost:5008/v1/MakeBooking',
-              this.newBooking
-          )
-          .then(() => {
-            this.createMessage = "Booking created successfully!";
-            this.createSuccess = true;
-            this.getBookings();
+      // Set the patient and nurse IDs
+      this.newBooking.PID = this.selectedPatient.PID;
+      this.newBooking.NID = this.selectedNurse.NID;
 
-            // Reset form
-            this.newBooking = {
-              PID: '',
-              NID: '',
-              StartTime: '',
-              EndTime: '',
-              APIKey: '',
-              Notes: '',
-              PaymentAmt: 0
-            };
-          })
-          .catch(error => {
-            console.error("Error creating booking:", error);
-            this.createMessage = "Error creating booking. Please try again.";
-            this.createSuccess = false;
-          })
-          .finally(() => {
-            this.isCreatingBooking = false;
-          });
+      // Validate payment amount
+      if (!this.newBooking.PaymentAmt || this.newBooking.PaymentAmt <= 0) {
+        this.createMessage = "Please enter a valid payment amount.";
+        this.createSuccess = false;
+        this.isCreatingBooking = false;
+        return;
+      }
+
+      // Start the payment flow first
+      this.createStripePayment();
     },
     randomNurse() {
       if (true) {
@@ -722,8 +875,36 @@ export default {
     }
   },
   created() {
-    // Initial load of data with loading states
-    // this.getBookings();
+    // Check for URL parameters that might indicate return from payment
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session_id');
+    const status = urlParams.get('status');
+    const isRedirect = urlParams.get('redirect') === 'true';
+
+    // Only process params if it's not a redirect (redirects are handled by the interval)
+    // This handles the case of a full page reload/direct URL access
+    if (sessionId && status === 'success' && !isRedirect) {
+      // Store the session ID and check payment status
+      this.paymentSessionId = sessionId;
+      this.tempBookingId = urlParams.get('booking_id');
+      this.isProcessingPayment = true;
+
+      // Remove params from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // Wait for component to fully initialize
+      this.$nextTick(() => {
+        this.checkPaymentStatus();
+      });
+    } else if (status === 'cancelled' && !isRedirect) {
+      this.createMessage = "Payment was cancelled. Please try again.";
+      this.createSuccess = false;
+
+      // Remove params from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    // Existing initialization code
     this.getCurrentPatient();
     this.getAllNurses();
   },
