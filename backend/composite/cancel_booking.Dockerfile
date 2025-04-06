@@ -6,10 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the amqp_setup.py file directly to the same directory as cancel_booking.py
-COPY rabbitmq/amqp_setup.py /app/composite/
+COPY composite/amqp_setup.py /app/composite/
 COPY composite/cancel_booking.py /app/composite/
-COPY config/.env /app/config/
+COPY .env /app/
 
 # Expose the port the app runs on
 EXPOSE 5005

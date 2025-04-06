@@ -20,7 +20,7 @@ import datetime
 # Load environment variables
 load_dotenv()
 
-# Service URLs - Update these based on your deployment
+# Service URLs - Update these based on deployment
 NURSE_SERVICE_URL = 'http://host.docker.internal:5003/api/nurses'
 BOOKING_SERVICE_URL = 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1'
 API_KEY = os.getenv('BOOKING_API_KEY')
@@ -43,7 +43,17 @@ def get_booking_details(bid):
     except requests.RequestException as e:
         print(f"Error in get_booking_details: {e}")
         return None
-
+def get_patient_details(pid):
+    """Get patient details from patient service"""
+    try:
+        response = requests.get(f"https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/GetPatient/{pid}")
+        if response.status_code == 200:
+            return response.json()
+        print(f"Patient service returned status code {response.status_code}")
+        return None
+    except requests.RequestException as e:
+        print(f"Error in get_patient_details: {e}")
+        return None
 def cancel_booking_with_reason(bid, reason):
     """Cancel a booking with reason"""
     
@@ -160,6 +170,20 @@ def update_nurse_credit_score(nid, credit_change, reason):
     except requests.RequestException as e:
         print(f"Error in update_nurse_credit_score: {e}")
         return {"error": str(e)}, False
+def increase_nurse_credit_score(nid, booking_id):
+    """Increase nurse credit score when booking is accepted"""
+    credit_data = {
+        "creditChange": 2,  # Add 2 points
+        "reason": f"Booking acceptance: {booking_id}"
+    }
+    try:
+        response = requests.put(f"{NURSE_SERVICE_URL}/{nid}/credit", json=credit_data)
+        if response.status_code == 200:
+            return response.json(), True
+        return {"error": "Failed to update credit score"}, False
+    except requests.RequestException as e:
+        return {"error": str(e)}, False
+
 
 def check_nurse_status(nid):
     """Check and update nurse warning/suspension status"""
@@ -201,12 +225,7 @@ async def process_nurse_cancellation(bid, nurse_id, reason, reassignment_count=0
     credit_score = nurse_data.get('creditScore', 100)
     cancel_history = reassignment_count
     
-    if cancel_history == 1:
-        credit_deduction = -10
-    elif cancel_history >= 2:
-        credit_deduction = -20
-    else:
-        credit_deduction = -5  # First cancellation
+    credit_deduction = -7
     
     # Cancel the booking with reason
     cancel_result, cancel_success = cancel_booking_with_reason(bid, reason)
@@ -344,9 +363,29 @@ async def send_notification_to_new_nurse(nurse_data, booking_id):
 
 async def send_notification_to_patient(booking_id, nurse_name, notification_type, new_nurse_name=None):
     """Send notification to patient about booking changes"""
-    # In a real implementation, you would get the patient email from the booking details
-    # For this example, we'll use a placeholder email 
-    patient_email = "patient@example.com"  # Replace with actual implementation
+    # Get booking details to find patient ID
+    booking_details = get_booking_details(booking_id)
+    if not booking_details:
+        print(f"Failed to get booking details for ID: {booking_id}")
+        return False
+
+    # Extract patient ID from booking data - adjust field names based on actual API response structure
+    patient_id = booking_details.get('fields', {}).get('PatientID', {}).get('stringValue')
+    if not patient_id:
+        print(f"No patient ID found in booking {booking_id}")
+        return False
+    
+    # Get patient details to find email
+    patient_details = get_patient_details(patient_id)
+    if not patient_details:
+        print(f"Failed to get patient details for ID: {patient_id}")
+        return False
+    
+    # Extract email from patient data - adjust field name based on actual API response
+    patient_email = patient_details.get('Email')  # Might be 'email' or another field
+    if not patient_email:
+        print(f"No email found for patient {patient_id}")
+        return False
     
     subject = "MedGrab Booking Update"
     
