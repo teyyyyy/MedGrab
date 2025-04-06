@@ -58,7 +58,7 @@ class Config:
     def get_amqp_config() -> AmqpConfig:
         """Get AMQP configuration from environment variables."""
         return AmqpConfig(
-            HOST=os.environ.get('AMQP_HOST', 'localhost'),
+            HOST=os.environ.get('AMQP_HOST', 'host.docker.internal'),
             PORT=int(os.environ.get('AMQP_PORT', 5672)),
             EXCHANGE_NAME=os.environ.get('EXCHANGE_NAME', 'medgrab_exchange'),
             EXCHANGE_TYPE=os.environ.get('EXCHANGE_TYPE', 'topic'),
@@ -181,8 +181,6 @@ class NotificationService:
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
 
-            <p><strong>Please respond to the request within 24 hours:</strong></p>
-
             <p>Thank you for your service.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
@@ -207,54 +205,6 @@ class NotificationService:
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
 
-            <p>Your nurse will confirm this booking shortly. You'll receive another notification once confirmed.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-    @staticmethod
-    def create_nurse_accepted_notification(nurse_name: str, patient_name: str,
-                                         start_time: str, end_time: str,
-                                         location: str, notes: str) -> str:
-        """Create HTML notification for an accepted booking to send to a nurse."""
-        return f"""
-        <html>
-        <body>
-            <p>Hello {nurse_name},</p>
-            <p>You have accepted the booking for patient {patient_name}.</p>
-            <hr>
-            <h3>Booking Details:</h3>
-            <ul>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Location:</strong> {location}</li>
-                <li><strong>Notes:</strong> {notes}</li>
-            </ul>
-            <p>Thank you for your service.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-    @staticmethod
-    def create_patient_accepted_notification(patient_name: str, nurse_name: str,
-                                           start_time: str, end_time: str, notes: str) -> str:
-        """Create HTML notification for an accepted booking to send to a patient."""
-        return f"""
-        <html>
-        <body>
-            <p>Hello {patient_name},</p>
-            <p>Good news! Your booking has been accepted by {nurse_name}.</p>
-            <hr>
-            <h3>Booking Details:</h3>
-            <ul>
-                <li><strong>Nurse:</strong> {nurse_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Notes:</strong> {notes}</li>
-            </ul>
-            <p>Please be available at the scheduled time.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
@@ -279,7 +229,6 @@ class NotificationService:
                 <li><strong>Location:</strong> {location}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-            <p><strong>Please respond to the request within 24 hours.</strong></p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
@@ -302,7 +251,6 @@ class NotificationService:
                 <li><strong>End time:</strong> {end_time}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-            <p>Your new nurse will confirm this booking shortly.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
@@ -462,138 +410,6 @@ class BookingManager:
             'booking_id': booking_result.get('BookingId', '')
         }
 
-    async def accept_booking(self, booking_id: str) -> Dict:
-        """Accept a booking and notify relevant parties."""
-        # Get booking details
-        booking_result = await self.booking_service.get_booking(booking_id)
-        booking_data = booking_result.get('Booking', {})
-
-        # Extract nurse and patient IDs
-        fields = booking_data.get('fields', {})
-        nurse_id = fields.get('NID', {}).get('stringValue')
-        patient_id = fields.get('PID', {}).get('stringValue')
-
-        if not nurse_id or not patient_id:
-            raise ApiError('Missing nurse or patient ID in booking data', 400)
-
-        # Get nurse and patient details
-        nurse = await self.nurse_service.get_nurse(nurse_id)
-        patient_data = await self.patient_service.get_patient(patient_id)
-        patient = patient_data.get('patient', {})
-
-        # Update booking status
-        await self.booking_service.update_booking_status(booking_id, 'Accepted')
-
-        # Create notifications
-        start_time = fields.get('StartTime', {}).get('stringValue', '')
-        end_time = fields.get('EndTime', {}).get('stringValue', '')
-        location = patient.get('Location', 'Unknown')
-        notes = fields.get('Notes', {}).get('stringValue', '')
-
-        nurse_name = nurse.get('name', 'Nurse')
-        nurse_email = nurse.get('email', '')
-        patient_name = patient.get('PatientName', 'Patient')
-        patient_email = patient.get('Email', '')
-
-        nurse_notification = NotificationService.create_nurse_accepted_notification(
-            nurse_name, patient_name, start_time, end_time, location, notes
-        )
-
-        patient_notification = NotificationService.create_patient_accepted_notification(
-            patient_name, nurse_name, start_time, end_time, notes
-        )
-
-        # Send notifications
-        if nurse_email:
-            await send_notification_amqp(
-                nurse_email,
-                "Booking Accepted",
-                nurse_notification
-            )
-
-        if patient_email:
-            await send_notification_amqp(
-                patient_email,
-                "Your booking has been accepted",
-                patient_notification
-            )
-
-        return {'message': 'Booking accepted'}
-
-    async def reject_and_reassign_booking(self, booking_id: str) -> Dict:
-        """Reject a booking and reassign it to another nurse."""
-        # Get booking details
-        booking_result = await self.booking_service.get_booking(booking_id)
-        booking_data = booking_result.get('Booking', {})
-
-        # Extract nurse and patient IDs
-        fields = booking_data.get('fields', {})
-        current_nurse_id = fields.get('NID', {}).get('stringValue')
-        patient_id = fields.get('PID', {}).get('stringValue')
-
-        if not current_nurse_id or not patient_id:
-            raise ApiError('Missing nurse or patient ID in booking data', 400)
-
-        # Get all nurses and find a new one
-        all_nurses = await self.nurse_service.get_all_nurses()
-        available_nurses = [nurse for nurse in all_nurses if nurse.get('NID') != current_nurse_id]
-
-        if not available_nurses:
-            raise ApiError('No other nurses available for reassignment', 400)
-
-        # Choose a random nurse
-        new_nurse = random.choice(available_nurses)
-        new_nurse_id = new_nurse.get('NID')
-
-        # Update booking with new nurse
-        await self.booking_service.update_booking_nurse(booking_id, new_nurse_id)
-
-        # Get patient details
-        patient_data = await self.patient_service.get_patient(patient_id)
-        patient = patient_data.get('patient', {})
-
-        # Create notifications
-        start_time = fields.get('StartTime', {}).get('stringValue', '')
-        end_time = fields.get('EndTime', {}).get('stringValue', '')
-        location = patient.get('Location', 'Unknown')
-        notes = fields.get('Notes', {}).get('stringValue', '')
-
-        new_nurse_name = new_nurse.get('name', 'Nurse')
-        new_nurse_email = new_nurse.get('email', '')
-        patient_name = patient.get('PatientName', 'Patient')
-        patient_email = patient.get('Email', '')
-
-        new_nurse_notification = NotificationService.create_new_nurse_reassigned_notification(
-            new_nurse_name, patient_name, start_time, end_time, location, notes
-        )
-
-        patient_notification = NotificationService.create_patient_reassigned_notification(
-            patient_name, new_nurse_name, start_time, end_time, notes
-        )
-
-        # Send notifications
-        if new_nurse_email:
-            await send_notification_amqp(
-                new_nurse_email,
-                "New booking assigned to you",
-                new_nurse_notification
-            )
-
-        if patient_email:
-            await send_notification_amqp(
-                patient_email,
-                "Your booking has been reassigned",
-                patient_notification
-            )
-
-        # Update booking status to "Pending" for the new nurse
-        await self.booking_service.update_booking_status(booking_id, 'Pending')
-
-        return {
-            'message': 'Booking rejected and reassigned',
-            'new_nurse_id': new_nurse_id
-        }
-
     async def cancel_with_reason_and_reassign(self, booking_id: str, reason: str) -> Dict:
         """Cancel a booking with reason and create a new booking with another nurse."""
         # Get booking details
@@ -697,7 +513,6 @@ class BookingManager:
                 <li><strong>End time:</strong> {end_time}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-            <p>Your new nurse will confirm this booking shortly.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
@@ -777,84 +592,6 @@ async def make_booking():
         ))
     except Exception as e:
         logger.error(f"Error in make_booking: {str(e)}")
-        return jsonify(api_response(
-            success=False,
-            error='Internal server error',
-            status_code=500
-        ))
-
-
-@booking_bp.route('/AcceptBooking', methods=['POST'])
-@async_route
-async def accept_booking():
-    """Endpoint to accept a booking."""
-    try:
-        data = request.json
-        logger.info(f"Received accept booking request: {data}")
-
-        booking_id = data.get('bid')
-        if not booking_id:
-            return jsonify(api_response(
-                success=False,
-                error='Missing booking ID (bid)',
-                status_code=400
-            ))
-
-        # Process booking acceptance
-        result = await booking_manager.accept_booking(booking_id)
-
-        return jsonify(api_response(
-            success=True,
-            **result
-        ))
-
-    except ApiError as e:
-        return jsonify(api_response(
-            success=False,
-            error=e.message,
-            status_code=e.status_code
-        ))
-    except Exception as e:
-        logger.error(f"Error in accept_booking: {str(e)}")
-        return jsonify(api_response(
-            success=False,
-            error='Internal server error',
-            status_code=500
-        ))
-
-
-@booking_bp.route('/RejectBooking', methods=['POST'])
-@async_route
-async def reject_booking():
-    """Endpoint to reject a booking and reassign it to another nurse."""
-    try:
-        data = request.json
-        logger.info(f"Received reject booking request: {data}")
-
-        booking_id = data.get('bid')
-        if not booking_id:
-            return jsonify(api_response(
-                success=False,
-                error='Missing booking ID (bid)',
-                status_code=400
-            ))
-
-        # Process booking rejection and reassignment
-        result = await booking_manager.reject_and_reassign_booking(booking_id)
-
-        return jsonify(api_response(
-            success=True,
-            **result
-        ))
-
-    except ApiError as e:
-        return jsonify(api_response(
-            success=False,
-            error=e.message,
-            status_code=e.status_code
-        ))
-    except Exception as e:
-        logger.error(f"Error in reject_booking: {str(e)}")
         return jsonify(api_response(
             success=False,
             error='Internal server error',

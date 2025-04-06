@@ -718,6 +718,7 @@ export default {
 
     // Retry payment
     retryPayment() {
+      this.resetPaymentState(); // Add this line
       this.createMessage = '';
       this.createStripePayment();
     },
@@ -727,9 +728,7 @@ export default {
       this.createMessage = "Setting up your secure payment...";
 
       // Generate temporary booking ID if not already set
-      if (!this.tempBookingId) {
-        this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
-      }
+      this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
 
       const paymentData = {
         amount: this.calculatedPrice, // Use calculated price instead of manual input
@@ -772,6 +771,7 @@ export default {
               this.createMessage = "Error creating payment link. Please try again.";
               this.createSuccess = false;
               this.isProcessingPayment = false;
+              this.isCreatingBooking = false;
               this.showToast("Failed to create payment link. Please try again.", "error");
             }
           })
@@ -780,6 +780,7 @@ export default {
             this.createMessage = "Payment service error. Please try again.";
             this.createSuccess = false;
             this.isProcessingPayment = false;
+            this.isCreatingBooking = false;
             this.showToast("Payment service error. Please try again later.", "error");
           });
     },
@@ -789,7 +790,7 @@ export default {
 
       // Handle payment completion
       if (event.data.type === 'PAYMENT_COMPLETED') {
-        // Clean up
+        // Clean up listeners but keep the payment state
         window.removeEventListener('message', this.handlePaymentMessage);
         if (this.paymentCheckInterval) {
           clearInterval(this.paymentCheckInterval);
@@ -807,39 +808,25 @@ export default {
 
       // Handle payment cancellation
       if (event.data.type === 'PAYMENT_CANCELLED') {
-        // Clean up
-        window.removeEventListener('message', this.handlePaymentMessage);
-        if (this.paymentCheckInterval) {
-          clearInterval(this.paymentCheckInterval);
-        }
-
         this.createMessage = "Payment was cancelled. Please try again.";
         this.createSuccess = false;
-        this.isProcessingPayment = false;
-        this.isCreatingBooking = false;
+        this.resetPaymentState(); // Use our new function
         this.showToast("Payment was cancelled. You can try again when ready.", "info");
       }
     },
     onPaymentWindowClosed() {
-      // Clean up
-      window.removeEventListener('message', this.handlePaymentMessage);
-      if (this.paymentCheckInterval) {
-        clearInterval(this.paymentCheckInterval);
-      }
+      // Clean up everything
+      this.resetPaymentState();
 
-      // If we're still processing and didn't get a message
-      if (this.isProcessingPayment && !this.createSuccess) {
-        // Set a message and reset state
+      // Only set message if we were still processing
+      if (!this.createSuccess) {
         this.createMessage = "Payment window closed. Please try again if your payment wasn't completed.";
-        this.createSuccess = false;
         this.showToast("Payment window closed. No payment was processed.", "info");
-        this.isProcessingPayment = false;
-        this.isCreatingBooking = false;
       }
     },
     checkPaymentStatus() {
       if (!this.paymentSessionId) {
-        this.isProcessingPayment = false;
+        this.resetPaymentState();
         return;
       }
 
@@ -856,7 +843,7 @@ export default {
               // Payment not successful or still pending
               this.createMessage = "Payment not completed. Please try again.";
               this.createSuccess = false;
-              this.isProcessingPayment = false;
+              this.resetPaymentState(); // Add this line
               this.showToast("Payment verification failed. Please try again.", "error");
             }
           })
@@ -864,7 +851,7 @@ export default {
             console.error("Error checking payment status:", error);
             this.createMessage = "Error verifying payment. Please contact support.";
             this.createSuccess = false;
-            this.isProcessingPayment = false;
+            this.resetPaymentState(); // Add this line
             this.showToast("Error verifying payment. Please contact support.", "error");
           });
     },
@@ -883,24 +870,19 @@ export default {
             this.getBookings();
             this.showToast("Your appointment has been successfully booked!", "success");
 
-            // Hide the payment overlay after a short delay
-            setTimeout(() => {
-              this.isProcessingPayment = false;
-            }, 2000);
 
-            // Reset form and payment data
+            this.isProcessingPayment = false;
+            this.resetPaymentState();
+
+            // Reset form
             this.resetForm();
-            this.paymentSessionId = null;
-            this.tempBookingId = null;
           })
           .catch(error => {
             console.error("Error creating booking:", error);
             this.createMessage = "Payment was successful but there was an error creating the booking. Please contact support with reference: " + this.paymentSessionId;
             this.createSuccess = false;
             this.showToast("Error creating booking. Please contact support.", "error");
-          })
-          .finally(() => {
-            this.isCreatingBooking = false;
+            this.resetPaymentState(); // Add this line
           });
     },
     formatDateTime(timestamp) {
@@ -1009,6 +991,33 @@ export default {
       this.randomNurse();
     },
 
+    resetPaymentState() {
+      // Reset all payment-related variables
+      this.tempBookingId = null;
+      this.paymentSessionId = null;
+      this.isProcessingPayment = false;
+      this.isCreatingBooking = false;
+      this.paymentStep = 1;
+
+      this.createSuccess = false;
+      this.createMessage = '';
+
+      // Clean up any lingering event listeners or intervals
+      window.removeEventListener('message', this.handlePaymentMessage);
+      if (this.paymentCheckInterval) {
+        clearInterval(this.paymentCheckInterval);
+        this.paymentCheckInterval = null;
+      }
+
+      // If payment window is still open, close it
+      if (this.paymentWindow && !this.paymentWindow.closed) {
+        this.paymentWindow.close();
+        this.paymentWindow = null;
+      }
+
+      console.log("Payment state has been reset completely");
+    },
+
 // For booking table filtering
     cancelBooking(booking) {
       // Implement booking cancellation logic here
@@ -1105,6 +1114,7 @@ export default {
     },
 
     createBooking() {
+      this.resetPaymentState();
       // Validate the form first
       if (!this.validateForm()) {
         this.showToast('Please fill in all required fields', 'error');
