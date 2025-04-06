@@ -153,8 +153,8 @@
         <div class="form-section">
           <h3 class="form-section-title">1. Choose Date & Time</h3>
 
-          <div class="form-row">
-            <div class="form-group">
+            <!-- Calendar now gets its own row -->
+            <div class="form-group" style="margin-left: auto; margin-right: auto">
               <label for="startTime">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="input-icon">
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
@@ -165,6 +165,9 @@
                 Start Time
               </label>
               <VueDatePicker
+                  inline
+                  auto-apply
+                  time-picker-inline
                   id="startTime"
                   v-model="newBooking.StartTime"
                   :required="true"
@@ -172,29 +175,56 @@
                   :clearable="false"
                   placeholder="Select start time"
                   class="date-picker"
+                  @update:modelValue="calculateEndTimeAndPayment"
               />
+              <div v-if="validationErrors.startTime" class="validation-error">
+                {{ validationErrors.startTime }}
+              </div>
             </div>
 
+            <!-- Duration slider now gets its own row -->
             <div class="form-group">
-              <label for="endTime">
+              <label for="durationHours">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="input-icon">
                   <circle cx="12" cy="12" r="10"></circle>
                   <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
-                End Time
+                Duration (Hours)
               </label>
-              <VueDatePicker
-                  id="endTime"
-                  v-model="newBooking.EndTime"
-                  :required="true"
-                  :enableTimePicker="true"
-                  :clearable="false"
-                  placeholder="Select end time"
-                  class="date-picker"
-              />
+              <div class="slider-container">
+                <input
+                    type="range"
+                    id="durationHours"
+                    v-model="durationHours"
+                    min="1"
+                    max="12"
+                    step="1"
+                    class="duration-slider"
+                    @input="calculateEndTimeAndPayment"
+                >
+                <div class="duration-display">{{ durationHours }} {{ durationHours === 1 ? 'hour' : 'hours' }}</div>
+              </div>
+            </div>
+
+            <div class="duration-summary" v-if="newBooking.StartTime && newBooking.EndTime">
+              <div class="summary-row">
+                <span class="summary-label">Appointment Period:</span>
+                <span class="summary-value">{{ formatTime(newBooking.StartTime) }} - {{ formatTime(newBooking.EndTime) }}</span>
+              </div>
+              <div class="summary-row">
+                <span class="summary-label">Date:</span>
+                <span class="summary-value">{{ formatDate(newBooking.StartTime) }}</span>
+              </div>
+              <div class="summary-row">
+                <span class="summary-label">Total Duration:</span>
+                <span class="summary-value">{{ durationHours }} {{ durationHours === 1 ? 'hour' : 'hours' }}</span>
+              </div>
+              <div class="summary-row pricing-row">
+                <span class="summary-label">Calculated Price:</span>
+                <span class="summary-value price-value">${{ calculatedPrice.toFixed(2) }}</span>
+              </div>
             </div>
           </div>
-        </div>
 
         <!-- Nurse Assignment -->
         <div class="form-section">
@@ -233,7 +263,7 @@
                 <line x1="21" y1="14" x2="3" y2="14"></line>
                 <line x1="21" y1="18" x2="3" y2="18"></line>
               </svg>
-              Notes and Requirements
+              Notes and Requirements <span class="required-label">*</span>
             </label>
             <textarea
                 id="notes"
@@ -241,26 +271,31 @@
                 placeholder="Describe your needs or any special requirements for this appointment"
                 rows="3"
             ></textarea>
+            <div v-if="validationErrors.notes" class="validation-error">
+              {{ validationErrors.notes }}
+            </div>
           </div>
 
-          <div class="form-group">
-            <label for="paymentAmt">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="input-icon">
-                <line x1="12" y1="1" x2="12" y2="23"></line>
-                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-              </svg>
-              Payment Amount
-            </label>
-            <div class="input-prefix">
-              <span class="currency-symbol">$</span>
-              <input
-                  type="number"
-                  step="0.01"
-                  id="paymentAmt"
-                  v-model="newBooking.PaymentAmt"
-                  placeholder="0.00"
-                  required
-              />
+          <div class="price-display">
+            <div class="price-info">
+              <div class="price-label">Calculated Payment:</div>
+              <div class="price-value">${{ calculatedPrice.toFixed(2) }}</div>
+            </div>
+            <div class="price-details">
+              <div class="price-breakdown">
+                <div class="breakdown-item">
+                  <span>Base rate (1 hour):</span>
+                  <span>${{ baseRate.toFixed(2) }}</span>
+                </div>
+                <div class="breakdown-item" v-if="durationHours > 1">
+                  <span>Additional hours ({{ durationHours - 1 }}):</span>
+                  <span>${{ (calculatedPrice - baseRate).toFixed(2) }}</span>
+                </div>
+                <div class="breakdown-item total">
+                  <span>Total amount:</span>
+                  <span>${{ calculatedPrice.toFixed(2) }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -285,13 +320,13 @@
     <section class="profile-section">
       <div class="section-header">
         <h2>Your Profile</h2>
-        <button class="btn-text">
+<!--        <button class="btn-text">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
           </svg>
           Edit Profile
-        </button>
+        </button>-->
       </div>
 
       <div class="profile-card">
@@ -426,6 +461,84 @@
         </div>
       </div>
     </div>
+    <div v-if="isProcessingPayment" class="payment-overlay">
+      <div class="payment-status-card">
+        <div class="payment-status-icon" :class="{ 'success': createSuccess, 'error': !createSuccess && createMessage.includes('cancelled') }">
+          <div v-if="!createSuccess && !createMessage.includes('cancelled')" class="payment-loader"></div>
+          <svg v-else-if="createSuccess" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+        </div>
+
+        <h3 class="payment-status-title">
+          {{ getPaymentStatusTitle() }}
+        </h3>
+
+        <p class="payment-status-message">{{ createMessage }}</p>
+
+        <div class="payment-status-steps">
+          <div class="payment-step" :class="{ 'active': paymentStep >= 1, 'completed': paymentStep > 1 }">
+            <div class="step-indicator">1</div>
+            <div class="step-label">Creating payment</div>
+          </div>
+          <div class="step-connector"></div>
+          <div class="payment-step" :class="{ 'active': paymentStep >= 2, 'completed': paymentStep > 2 }">
+            <div class="step-indicator">2</div>
+            <div class="step-label">Processing payment</div>
+          </div>
+          <div class="step-connector"></div>
+          <div class="payment-step" :class="{ 'active': paymentStep >= 3, 'completed': paymentStep > 3 }">
+            <div class="step-indicator">3</div>
+            <div class="step-label">Confirming booking</div>
+          </div>
+        </div>
+
+        <button v-if="createMessage.includes('cancelled') || (createMessage.includes('closed') && !createSuccess)"
+                class="btn-retry"
+                @click="retryPayment">
+          Try Again
+        </button>
+      </div>
+    </div>
+    <div class="toast-container">
+      <transition-group name="toast">
+        <div v-for="(toast, index) in toastMessages" :key="toast.id"
+             class="toast-notification"
+             :class="toast.type">
+          <div class="toast-icon">
+            <svg v-if="toast.type === 'success'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <svg v-else-if="toast.type === 'error'" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="15" y1="9" x2="9" y2="15"></line>
+              <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+            <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <div class="toast-content">
+            <p>{{ toast.message }}</p>
+          </div>
+          <button class="toast-close" @click="removeToast(index)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </transition-group>
+    </div>
   </div>
 </template>
 
@@ -452,6 +565,26 @@ export default {
       isLoadingPatients: false,
       isCreatingBooking: false,
       isAcceptingBooking: false,
+      isProcessingPayment: false,
+      paymentSessionId: null,
+      tempBookingId: null,
+      paymentWindow: null,
+      paymentCheckInterval: null,
+      paymentStep: 1, // Track the current step in the payment process
+      toastMessages: [], // Array to store toast notifications
+      toastCounter: 0, // Counter for unique toast IDs
+
+      // New fields for duration-based booking
+      durationHours: 1,
+      baseRate: 20, // Base rate for 1 hour in dollars
+      calculatedPrice: 20, // Initial calculated price
+
+      validationErrors: {
+        startTime: '',
+        notes: '',
+        nurse: ''
+      },
+
       newBooking: {
         PID: '',
         NID: '',
@@ -478,6 +611,298 @@ export default {
     }
   },
   methods: {
+    validateForm() {
+      // Reset validation errors
+      this.validationErrors = {
+        startTime: '',
+        notes: '',
+        nurse: ''
+      };
+
+      let isValid = true;
+
+      // Validate start time
+      if (!this.newBooking.StartTime) {
+        this.validationErrors.startTime = 'Please select a start time for your appointment';
+        isValid = false;
+      }
+
+      // Validate notes
+      if (!this.newBooking.Notes || this.newBooking.Notes.trim() === '') {
+        this.validationErrors.notes = 'Please provide details about your appointment requirements';
+        isValid = false;
+      }
+
+      // Validate nurse assignment
+      if (!this.selectedNurse || !this.selectedNurse.NID) {
+        this.validationErrors.nurse = 'A nurse must be assigned to your appointment';
+        isValid = false;
+      }
+
+      return isValid;
+    },
+    // Calculate end time based on start time and duration hours
+    calculateEndTimeAndPayment() {
+      if (!this.newBooking.StartTime) return;
+
+      // Create a new date object for end time by adding hours to start time
+      const startTime = new Date(this.newBooking.StartTime);
+      const endTime = new Date(startTime);
+      endTime.setHours(startTime.getHours() + parseInt(this.durationHours));
+
+      // Update the end time
+      this.newBooking.EndTime = endTime;
+
+      // Calculate the payment based on exponential pricing formula
+      this.calculatePayment();
+    },
+
+    // Exponential pricing calculation
+    calculatePayment() {
+      // Base rate for first hour
+      let total = this.baseRate;
+
+      // For additional hours, apply exponential pricing
+      // Formula: base_rate + (hour_number^1.5 * factor)
+      if (this.durationHours > 1) {
+        for (let hour = 2; hour <= this.durationHours; hour++) {
+          // Exponential factor makes each additional hour more expensive
+          const hourFactor = Math.pow(hour, 1.5);
+          total += (this.baseRate / 2) * (hourFactor / 5);
+        }
+      }
+
+      // Update the calculated price and payment amount
+      this.calculatedPrice = Math.round(total * 100) / 100; // Round to 2 decimal places
+      this.newBooking.PaymentAmt = this.calculatedPrice;
+    },
+
+    showToast(message, type = 'info', duration = 5000) {
+      const toast = {
+        id: this.toastCounter++,
+        message,
+        type
+      };
+
+      this.toastMessages.push(toast);
+
+      // Auto remove toast after duration
+      if (duration > 0) {
+        setTimeout(() => {
+          this.removeToast(this.toastMessages.findIndex(t => t.id === toast.id));
+        }, duration);
+      }
+
+      return toast.id;
+    },
+
+    // Remove a toast notification
+    removeToast(index) {
+      if (index > -1) {
+        this.toastMessages.splice(index, 1);
+      }
+    },
+
+    // Get the title for the payment status card based on current state
+    getPaymentStatusTitle() {
+      if (this.createSuccess) {
+        return 'Payment Successful';
+      } else if (this.createMessage.includes('cancelled')) {
+        return 'Payment Cancelled';
+      } else if (this.createMessage.includes('closed')) {
+        return 'Payment Window Closed';
+      } else {
+        return 'Processing Payment';
+      }
+    },
+
+    // Retry payment
+    retryPayment() {
+      this.createMessage = '';
+      this.createStripePayment();
+    },
+    createStripePayment() {
+      this.isProcessingPayment = true;
+      this.paymentStep = 1; // Set to first step
+      this.createMessage = "Setting up your secure payment...";
+
+      // Generate temporary booking ID if not already set
+      if (!this.tempBookingId) {
+        this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
+      }
+
+      const paymentData = {
+        amount: this.calculatedPrice, // Use calculated price instead of manual input
+        booking_id: this.tempBookingId,
+        patient_id: this.selectedPatient.PID,
+        nurse_id: this.selectedNurse.NID
+      };
+
+      axios.post('http://localhost:5010/create-payment-link', paymentData)
+          .then(response => {
+            if (response.data.success) {
+              // Store the session ID for later verification
+              this.paymentSessionId = response.data.session_id;
+              this.paymentStep = 2; // Move to second step
+              this.createMessage = "Payment window opened. Please complete your payment.";
+
+              // Open payment in a popup window we can control
+              const width = 550;
+              const height = 650;
+              const left = (window.screen.width / 2) - (width / 2);
+              const top = (window.screen.height / 2) - (height / 2);
+
+              this.paymentWindow = window.open(
+                  response.data.payment_url,
+                  'stripe_checkout',
+                  `width=${width},height=${height},top=${top},left=${left},toolbar=no,location=no,status=no,menubar=no`
+              );
+
+              // Add message listener for payment completion
+              window.addEventListener('message', this.handlePaymentMessage);
+
+              // Set interval just to check if window was closed manually
+              this.paymentCheckInterval = setInterval(() => {
+                if (this.paymentWindow && this.paymentWindow.closed) {
+                  clearInterval(this.paymentCheckInterval);
+                  this.onPaymentWindowClosed();
+                }
+              }, 500);
+            } else {
+              this.createMessage = "Error creating payment link. Please try again.";
+              this.createSuccess = false;
+              this.isProcessingPayment = false;
+              this.showToast("Failed to create payment link. Please try again.", "error");
+            }
+          })
+          .catch(error => {
+            console.error("Error creating Stripe payment:", error);
+            this.createMessage = "Payment service error. Please try again.";
+            this.createSuccess = false;
+            this.isProcessingPayment = false;
+            this.showToast("Payment service error. Please try again later.", "error");
+          });
+    },
+    handlePaymentMessage(event) {
+      // Ignore messages from unknown sources
+      if (!event.data || !event.data.type) return;
+
+      // Handle payment completion
+      if (event.data.type === 'PAYMENT_COMPLETED') {
+        // Clean up
+        window.removeEventListener('message', this.handlePaymentMessage);
+        if (this.paymentCheckInterval) {
+          clearInterval(this.paymentCheckInterval);
+        }
+
+        // Set session ID and process payment
+        this.paymentSessionId = event.data.sessionId;
+        this.createMessage = "Payment successful! Verifying...";
+        this.createSuccess = true;
+        this.paymentStep = 3; // Move to third step
+
+        // Check payment status
+        this.checkPaymentStatus();
+      }
+
+      // Handle payment cancellation
+      if (event.data.type === 'PAYMENT_CANCELLED') {
+        // Clean up
+        window.removeEventListener('message', this.handlePaymentMessage);
+        if (this.paymentCheckInterval) {
+          clearInterval(this.paymentCheckInterval);
+        }
+
+        this.createMessage = "Payment was cancelled. Please try again.";
+        this.createSuccess = false;
+        this.isProcessingPayment = false;
+        this.isCreatingBooking = false;
+        this.showToast("Payment was cancelled. You can try again when ready.", "info");
+      }
+    },
+    onPaymentWindowClosed() {
+      // Clean up
+      window.removeEventListener('message', this.handlePaymentMessage);
+      if (this.paymentCheckInterval) {
+        clearInterval(this.paymentCheckInterval);
+      }
+
+      // If we're still processing and didn't get a message
+      if (this.isProcessingPayment && !this.createSuccess) {
+        // Set a message and reset state
+        this.createMessage = "Payment window closed. Please try again if your payment wasn't completed.";
+        this.createSuccess = false;
+        this.showToast("Payment window closed. No payment was processed.", "info");
+        this.isProcessingPayment = false;
+        this.isCreatingBooking = false;
+      }
+    },
+    checkPaymentStatus() {
+      if (!this.paymentSessionId) {
+        this.isProcessingPayment = false;
+        return;
+      }
+
+      this.createMessage = "Verifying payment status...";
+
+      axios.get(`http://localhost:5010/payment-status/${this.paymentSessionId}`)
+          .then(response => {
+            if (response.data.success && response.data.payment_status === 'paid') {
+              // Payment succeeded, finalize the booking
+              this.createSuccess = true;
+              this.createMessage = "Payment successful! Creating your booking...";
+              this.finalizeBooking();
+            } else {
+              // Payment not successful or still pending
+              this.createMessage = "Payment not completed. Please try again.";
+              this.createSuccess = false;
+              this.isProcessingPayment = false;
+              this.showToast("Payment verification failed. Please try again.", "error");
+            }
+          })
+          .catch(error => {
+            console.error("Error checking payment status:", error);
+            this.createMessage = "Error verifying payment. Please contact support.";
+            this.createSuccess = false;
+            this.isProcessingPayment = false;
+            this.showToast("Error verifying payment. Please contact support.", "error");
+          });
+    },
+    finalizeBooking() {
+      // Set the booking ID from our temp ID
+      this.newBooking.BID = this.tempBookingId;
+
+      axios.post(
+          'http://localhost:5008/v1/MakeBooking',
+          this.newBooking
+      )
+          .then(() => {
+            this.paymentStep = 4; // Complete all steps
+            this.createMessage = "Success! Your appointment has been booked and payment confirmed.";
+            this.createSuccess = true;
+            this.getBookings();
+            this.showToast("Your appointment has been successfully booked!", "success");
+
+            // Hide the payment overlay after a short delay
+            setTimeout(() => {
+              this.isProcessingPayment = false;
+            }, 2000);
+
+            // Reset form and payment data
+            this.resetForm();
+            this.paymentSessionId = null;
+            this.tempBookingId = null;
+          })
+          .catch(error => {
+            console.error("Error creating booking:", error);
+            this.createMessage = "Payment was successful but there was an error creating the booking. Please contact support with reference: " + this.paymentSessionId;
+            this.createSuccess = false;
+            this.showToast("Error creating booking. Please contact support.", "error");
+          })
+          .finally(() => {
+            this.isCreatingBooking = false;
+          });
+    },
     formatDateTime(timestamp) {
       if (!timestamp) return 'N/A';
 
@@ -579,6 +1004,8 @@ export default {
         Notes: '',
         PaymentAmt: 0
       };
+      this.durationHours = 1;
+      this.calculatedPrice = this.baseRate;
       this.randomNurse();
     },
 
@@ -678,40 +1105,24 @@ export default {
     },
 
     createBooking() {
+      // Validate the form first
+      if (!this.validateForm()) {
+        this.showToast('Please fill in all required fields', 'error');
+        return;
+      }
+
       this.isCreatingBooking = true;
       this.createMessage = '';
-      this.newBooking.PID = this.selectedPatient.PID
-      this.newBooking.NID = this.selectedNurse.NID
 
-      axios
-          .post(
-              'http://localhost:5008/v1/MakeBooking',
-              this.newBooking
-          )
-          .then(() => {
-            this.createMessage = "Booking created successfully!";
-            this.createSuccess = true;
-            this.getBookings();
+      // Set the patient and nurse IDs
+      this.newBooking.PID = this.selectedPatient.PID;
+      this.newBooking.NID = this.selectedNurse.NID;
 
-            // Reset form
-            this.newBooking = {
-              PID: '',
-              NID: '',
-              StartTime: '',
-              EndTime: '',
-              APIKey: '',
-              Notes: '',
-              PaymentAmt: 0
-            };
-          })
-          .catch(error => {
-            console.error("Error creating booking:", error);
-            this.createMessage = "Error creating booking. Please try again.";
-            this.createSuccess = false;
-          })
-          .finally(() => {
-            this.isCreatingBooking = false;
-          });
+      // Ensure end time is set correctly
+      this.calculateEndTimeAndPayment();
+
+      // Start the payment flow
+      this.createStripePayment();
     },
     randomNurse() {
       if (true) {
@@ -722,8 +1133,40 @@ export default {
     }
   },
   created() {
-    // Initial load of data with loading states
-    // this.getBookings();
+    // Check for URL parameters that might indicate return from payment
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session_id');
+    const status = urlParams.get('status');
+    const isRedirect = urlParams.get('redirect') === 'true';
+
+    // Only process params if it's not a redirect (redirects are handled by the interval)
+    // This handles the case of a full page reload/direct URL access
+    if (sessionId && status === 'success' && !isRedirect) {
+      // Store the session ID and check payment status
+      this.paymentSessionId = sessionId;
+      this.tempBookingId = urlParams.get('booking_id');
+      this.isProcessingPayment = true;
+
+      // Remove params from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // Wait for component to fully initialize
+      this.$nextTick(() => {
+        this.checkPaymentStatus();
+      });
+    } else if (status === 'cancelled' && !isRedirect) {
+      this.createMessage = "Payment was cancelled. Please try again.";
+      this.createSuccess = false;
+      this.isProcessingPayment = false;
+
+      // Remove params from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    // Initialize with calculated price
+    this.calculatedPrice = this.baseRate;
+
+    // Existing initialization code
     this.getCurrentPatient();
     this.getAllNurses();
   },
@@ -782,6 +1225,189 @@ export default {
   --transition: all 0.3s ease;
 }
 
+#startTime {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.required-label {
+  color: #ef4444;
+  margin-left: 2px;
+}
+
+.validation-error {
+  color: #ef4444;
+  font-size: 14px;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+/* Style for the nurse section to display validation error */
+.nurse-card {
+  position: relative;
+}
+
+.nurse-validation-error {
+  color: #ef4444;
+  font-size: 14px;
+  margin-top: 6px;
+  font-weight: 500;
+  position: absolute;
+  bottom: -22px;
+  left: 16px;
+}
+
+/* New Duration Slider Styles */
+.slider-container {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.duration-slider {
+  width: 100%;
+  height: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--neutral-200);
+  border-radius: 4px;
+  outline: none;
+  margin-top: 10px;
+  margin-bottom: 16px;
+}
+
+.duration-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s;
+}
+
+.duration-slider::-webkit-slider-thumb:hover {
+  background: var(--secondary);
+  transform: scale(1.1);
+}
+
+.duration-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s;
+}
+
+.duration-slider::-moz-range-thumb:hover {
+  background: var(--secondary);
+  transform: scale(1.1);
+}
+
+.duration-display {
+  text-align: center;
+  font-weight: 600;
+  color: var(--primary);
+  font-size: 16px;
+  margin-top: -8px;
+}
+
+/* Duration Summary Styles */
+.duration-summary {
+  background-color: var(--primary-light);
+  padding: 16px;
+  border-radius: 8px;
+  margin-top: 24px;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.summary-row:last-child {
+  margin-bottom: 0;
+}
+
+.summary-label {
+  font-weight: 500;
+  color: var(--neutral-700);
+}
+
+.summary-value {
+  font-weight: 600;
+  color: var(--neutral-800);
+}
+
+.pricing-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--neutral-300);
+}
+
+.price-value {
+  color: var(--primary);
+  font-size: 18px;
+}
+
+/* Price Display Styles */
+.price-display {
+  background-color: var(--primary-light);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.price-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.price-label {
+  font-weight: 600;
+  color: var(--neutral-700);
+  font-size: 16px;
+}
+
+.price-value {
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 24px;
+}
+
+.price-details {
+  padding-top: 12px;
+  border-top: 1px dashed var(--neutral-300);
+}
+
+.price-breakdown {
+  font-size: 14px;
+}
+
+.breakdown-item {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: var(--neutral-600);
+}
+
+.breakdown-item.total {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--neutral-300);
+  font-weight: 600;
+  color: var(--neutral-800);
+}
+
+/* Existing Styles Below */
 * {
   box-sizing: border-box;
 }
@@ -1731,5 +2357,291 @@ tr:hover {
   .modal-content {
     max-height: 95vh;
   }
+}
+.payment-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(17, 24, 39, 0.85);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(3px);
+}
+
+.payment-status-card {
+  background: white;
+  border-radius: 12px;
+  padding: 32px;
+  width: 100%;
+  max-width: 500px;
+  text-align: center;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: cardAppear 0.3s ease-out;
+}
+
+@keyframes cardAppear {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.payment-status-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background-color: var(--primary-light);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24px auto;
+}
+
+.payment-status-icon.success {
+  background-color: #ecfdf5;
+  color: #10b981;
+}
+
+.payment-status-icon.error {
+  background-color: #fef2f2;
+  color: #ef4444;
+}
+
+.payment-loader {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(67, 97, 238, 0.3);
+  border-radius: 50%;
+  border-top-color: var(--primary);
+  animation: spin 1s linear infinite;
+}
+
+.payment-status-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: var(--neutral-800);
+}
+
+.payment-status-message {
+  color: var(--neutral-600);
+  margin-bottom: 24px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.payment-status-steps {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.payment-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  width: 80px;
+}
+
+.step-indicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--neutral-200);
+  color: var(--neutral-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  transition: all 0.3s ease;
+}
+
+.step-label {
+  font-size: 12px;
+  color: var(--neutral-500);
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.step-connector {
+  flex-grow: 1;
+  height: 2px;
+  background-color: var(--neutral-200);
+  position: relative;
+  top: -14px;
+  margin: 0 4px;
+  transition: all 0.3s ease;
+}
+
+.payment-step.active .step-indicator {
+  background-color: var(--primary);
+  color: white;
+}
+
+.payment-step.active .step-label {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.payment-step.completed .step-indicator {
+  background-color: #10b981;
+  color: white;
+}
+
+.payment-step.completed .step-label {
+  color: #10b981;
+  font-weight: 500;
+}
+
+.payment-step.completed + .step-connector,
+.payment-step.active + .step-connector {
+  background-color: var(--primary);
+}
+
+.payment-step.completed + .step-connector {
+  background-color: #10b981;
+}
+
+.btn-retry {
+  padding: 12px 24px;
+  background-color: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 6px -1px rgba(67, 97, 238, 0.1), 0 2px 4px -1px rgba(67, 97, 238, 0.06);
+}
+
+.btn-retry:hover {
+  background-color: var(--secondary);
+  transform: translateY(-1px);
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 360px;
+}
+
+.toast-notification {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  animation: slideIn 0.3s ease-out;
+  transition: all 0.3s ease;
+  max-width: 360px;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.toast-notification.success {
+  background-color: #ecfdf5;
+  border-left: 4px solid #10b981;
+}
+
+.toast-notification.error {
+  background-color: #fef2f2;
+  border-left: 4px solid #ef4444;
+}
+
+.toast-notification.info {
+  background-color: #eff6ff;
+  border-left: 4px solid #3b82f6;
+}
+
+.toast-icon {
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toast-notification.success .toast-icon {
+  color: #10b981;
+}
+
+.toast-notification.error .toast-icon {
+  color: #ef4444;
+}
+
+.toast-notification.info .toast-icon {
+  color: #3b82f6;
+}
+
+.toast-content {
+  flex: 1;
+}
+
+.toast-content p {
+  margin: 0;
+  color: var(--neutral-800);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--neutral-500);
+  padding: 4px;
+  margin-left: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.toast-close:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: var(--neutral-800);
+}
+
+/* Toast transition animations */
+.toast-enter-active, .toast-leave-active {
+  transition: all 0.3s;
+}
+
+.toast-enter-from {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(40px);
 }
 </style>

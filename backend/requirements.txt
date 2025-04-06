@@ -18,3 +18,7 @@ wkhtmltopdf==0.2
 weasyprint==65.0
 flask[async]
 httpx
+stripe
+uuid
+gunicorn
+pytz==2024.2
