@@ -74,7 +74,7 @@ def create_nurse():
         'isSuspended': False,
         'suspensionEndDate': None,
         'isWarned': False,
-        'createdAt': firestore.SERVER_TIMESTAMP
+        # 'createdAt': firestore.SERVER_TIMESTAMP
     }
     
     # Check if certification data is provided
@@ -91,7 +91,7 @@ def create_nurse():
                 'status': status
             }
     
-    nurse_ref.set(nurse_data)
+    nurse_ref.set(nurse_data)   
     
     return jsonify({
         'success': True,

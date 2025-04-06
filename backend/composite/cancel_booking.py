@@ -54,6 +54,68 @@ def get_patient_details(pid):
     except requests.RequestException as e:
         print(f"Error in get_patient_details: {e}")
         return None
+def get_cancelled_bookings_for_patient_time(pid, start_time, end_time):
+    """Get cancelled bookings for a patient in a specific time slot"""
+    try:
+        print(f"Getting all bookings for patient: {pid}")
+        response = requests.get(f"{BOOKING_SERVICE_URL}/GetBookingsFromUser/{pid}")
+        
+        if response.status_code != 200:
+            print(f"Failed to get patient bookings with status {response.status_code}")
+            return []
+        
+        all_bookings = response.json().get('Bookings', [])
+        
+        # Filter for cancelled bookings in the same time slot
+        cancelled_bookings = []
+        for booking in all_bookings:
+            fields = booking.get('fields', {})
+            booking_status = fields.get('Status', {}).get('stringValue', '')
+            booking_start = fields.get('StartTime', {}).get('timestampValue', '')
+            booking_end = fields.get('EndTime', {}).get('timestampValue', '')
+            
+            # Check if booking is cancelled and matches the time slot
+            if (booking_status == 'Cancelled' and 
+                booking_start == start_time and 
+                booking_end == end_time):
+                cancelled_bookings.append(booking)
+        
+        print(f"Found {len(cancelled_bookings)} cancelled bookings matching criteria")
+        return cancelled_bookings
+    except requests.RequestException as e:
+        print(f"Error getting cancelled bookings: {e}")
+        return []
+
+def create_booking_from_cancellation(pid, nid, start_time, end_time, notes, payment_amt, cancellation_count):
+    """Create a new booking from a cancelled booking"""
+    try:
+        data = {
+            "APIKey": API_KEY,
+            "PID": pid,
+            "NID": nid,
+            "StartTime": start_time,
+            "EndTime": end_time,
+            "Notes": notes,
+            "PaymentAmt": payment_amt,
+            "CancellationCount": cancellation_count
+        }
+        
+        print(f"Creating booking from cancellation: {BOOKING_SERVICE_URL}/CreateBookingFromCancellation")
+        response = requests.post(
+            f"{BOOKING_SERVICE_URL}/CreateBookingFromCancellation", 
+            json=data
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            print(f"New booking created successfully: {result}")
+            return result, True
+        
+        print(f"Create booking failed with status code {response.status_code}: {response.text}")
+        return {"error": f"Create booking failed: {response.text}"}, False
+    except requests.RequestException as e:
+        print(f"Error in create_booking_from_cancellation: {e}")
+        return {"error": str(e)}, False
 def cancel_booking_with_reason(bid, reason):
     """Cancel a booking with reason"""
     
@@ -199,16 +261,7 @@ def check_nurse_status(nid):
 
 # Main function to handle nurse cancellation and reassignment
 async def process_nurse_cancellation(bid, nurse_id, reason, reassignment_count=0, max_reassignments=3):
-    """
-    Process a nurse cancellation and handle reassignment logic
-    
-    Parameters:
-    - bid: Booking ID
-    - nurse_id: ID of the nurse cancelling the booking
-    - reason: Cancellation reason
-    - reassignment_count: Current count of reassignments
-    - max_reassignments: Maximum number of allowed reassignments
-    """
+    """Process a nurse cancellation and handle reassignment logic"""
     print(f"Processing nurse cancellation for Booking ID: {bid}, Nurse ID: {nurse_id}")
     print(f"Current reassignment count: {reassignment_count}, Max allowed: {max_reassignments}")
     
@@ -220,11 +273,23 @@ async def process_nurse_cancellation(bid, nurse_id, reason, reassignment_count=0
             "message": "Nurse not found"
         }
     
-    # Determine credit score deduction based on cancellation history
-    # If second cancellation, deduct 10 points, if third or more, deduct 20 points
-    credit_score = nurse_data.get('creditScore', 100)
-    cancel_history = reassignment_count
+    # Get booking details to retrieve patient info and time slot
+    booking_details = get_booking_details(bid)
+    if not booking_details:
+        return {
+            "success": False,
+            "message": "Booking not found"
+        }
     
+    # Extract booking information
+    fields = booking_details.get('fields', {})
+    patient_id = fields.get('PatientID', {}).get('stringValue')
+    start_time = fields.get('StartTime', {}).get('timestampValue')
+    end_time = fields.get('EndTime', {}).get('timestampValue')
+    notes = fields.get('Notes', {}).get('stringValue', '')
+    payment_amt = fields.get('PaymentAmt', {}).get('doubleValue', 0)
+    
+    # Determine credit score deduction
     credit_deduction = -7
     
     # Cancel the booking with reason
@@ -251,8 +316,6 @@ async def process_nurse_cancellation(bid, nurse_id, reason, reassignment_count=0
     # Check if we've exceeded max reassignments
     if reassignment_count >= max_reassignments:
         # If so, permanently cancel the booking and notify patient
-        
-        # Notify patient
         await send_notification_to_patient(bid, nurse_data.get('name'), "max_reassignments")
         
         return {
@@ -263,51 +326,112 @@ async def process_nurse_cancellation(bid, nurse_id, reason, reassignment_count=0
             "requireNewBooking": True
         }
     
-    # Otherwise, try to assign a new nurse
-    new_nurse, assign_success = assign_new_nurse()
-    if not assign_success:
+    # Get all cancelled bookings for this patient/time slot
+    cancelled_bookings = get_cancelled_bookings_for_patient_time(patient_id, start_time, end_time)
+    
+    # Extract nurse IDs who previously cancelled
+    excluded_nurse_ids = []
+    for booking in cancelled_bookings:
+        nurse_id_field = booking.get('fields', {}).get('NID', {}).get('stringValue')
+        if nurse_id_field and nurse_id_field not in excluded_nurse_ids:
+            excluded_nurse_ids.append(nurse_id_field)
+    
+    # Add the current cancelling nurse to the exclusion list
+    if nurse_id not in excluded_nurse_ids:
+        excluded_nurse_ids.append(nurse_id)
+    
+    # Get all available nurses
+    try:
+        nurse_response = requests.get(f"{NURSE_SERVICE_URL}/")
+        if nurse_response.status_code != 200:
+            return {
+                "success": False,
+                "message": "Failed to get available nurses",
+                "creditScoreDeduction": credit_deduction,
+                "nurseStatus": status_result
+            }
+            
+        all_nurses = nurse_response.json()
+        
+        # Filter out nurses who previously cancelled and suspended nurses
+        eligible_nurses = [
+            nurse for nurse in all_nurses 
+            if nurse.get('NID') not in excluded_nurse_ids 
+            and not nurse.get('isSuspended', False)
+        ]
+        
+        if not eligible_nurses:
+            # If no eligible nurses available, permanently cancel
+            await send_notification_to_patient(bid, nurse_data.get('name'), "max_reassignments")
+            
+            return {
+                "success": True,
+                "message": "Booking permanently cancelled as no eligible nurses are available",
+                "creditScoreDeduction": credit_deduction,
+                "nurseStatus": status_result,
+                "requireNewBooking": True
+            }
+        
+        # Randomly select a nurse
+        import random
+        new_nurse = random.choice(eligible_nurses)
+        new_nurse_id = new_nurse.get('NID')
+        
+        # Create a new booking from the cancelled one with incremented cancellation count
+        new_booking_result, create_success = create_booking_from_cancellation(
+            patient_id, 
+            new_nurse_id, 
+            start_time, 
+            end_time, 
+            notes, 
+            payment_amt, 
+            reassignment_count + 1
+        )
+        
+        if not create_success:
+            return {
+                "success": False,
+                "message": "Failed to create new booking after cancellation",
+                "creditScoreDeduction": credit_deduction,
+                "nurseStatus": status_result
+            }
+        
+        # Extract new booking ID from result
+        new_booking_id = new_booking_result.get('BID')
+        
+        # Notify new nurse about assignment
+        await send_notification_to_new_nurse(new_nurse, new_booking_id)
+        
+        # Notify patient about reassignment
+        await send_notification_to_patient(bid, nurse_data.get('name'), "reassigned", new_nurse.get('name'))
+        
+        return {
+            "success": True,
+            "message": "Booking successfully reassigned to new nurse",
+            "previousNurse": {
+                "id": nurse_id,
+                "name": nurse_data.get('name'),
+                "creditScoreDeduction": credit_deduction,
+                "newCreditScore": credit_result.get('creditScore') if credit_success else None,
+                "status": status_result
+            },
+            "newNurse": {
+                "id": new_nurse_id,
+                "name": new_nurse.get('name')
+            },
+            "oldBookingId": bid,
+            "newBookingId": new_booking_id,
+            "cancellationCount": reassignment_count + 1
+        }
+        
+    except Exception as e:
+        print(f"Error during nurse reassignment: {e}")
         return {
             "success": False,
-            "message": "Failed to assign new nurse",
+            "message": f"Server error during reassignment: {str(e)}",
             "creditScoreDeduction": credit_deduction,
             "nurseStatus": status_result
         }
-    
-    # Update booking with new nurse
-    new_nurse_id = new_nurse.get('NID')
-    update_result, update_success = update_booking_nurse(bid, new_nurse_id)
-    
-    if not update_success:
-        return {
-            "success": False,
-            "message": "Failed to update booking with new nurse",
-            "creditScoreDeduction": credit_deduction,
-            "nurseStatus": status_result
-        }
-    
-    # Notify new nurse about assignment
-    await send_notification_to_new_nurse(new_nurse, bid)
-    
-    # Notify patient about reassignment
-    await send_notification_to_patient(bid, nurse_data.get('name'), "reassigned", new_nurse.get('name'))
-    
-    return {
-        "success": True,
-        "message": "Booking successfully reassigned to new nurse",
-        "previousNurse": {
-            "id": nurse_id,
-            "name": nurse_data.get('name'),
-            "creditScoreDeduction": credit_deduction,
-            "newCreditScore": credit_result.get('creditScore') if credit_success else None,
-            "status": status_result
-        },
-        "newNurse": {
-            "id": new_nurse_id,
-            "name": new_nurse.get('name')
-        },
-        "reassignmentCount": reassignment_count + 1
-    }
-
 # Notification functions
 async def send_notification_to_nurse(nurse_data, booking_id, credit_deduction):
     """Send notification to nurse about cancellation and credit score impact"""
