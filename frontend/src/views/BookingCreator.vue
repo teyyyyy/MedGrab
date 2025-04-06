@@ -667,7 +667,8 @@ export default {
       if (this.durationHours > 1) {
         for (let hour = 2; hour <= this.durationHours; hour++) {
           // Exponential factor makes each additional hour more expensive
-          const hourFactor = Math.pow(hour, 1.5);
+          //const hourFactor = Math.pow(hour, 2.5);
+          const hourFactor = 8.5
           total += (this.baseRate / 2) * (hourFactor / 5);
         }
       }
@@ -867,15 +868,15 @@ export default {
             this.paymentStep = 4; // Complete all steps
             this.createMessage = "Success! Your appointment has been booked and payment confirmed.";
             this.createSuccess = true;
+
+            this.isProcessingPayment = false;
+
             this.getBookings();
             this.showToast("Your appointment has been successfully booked!", "success");
 
-
-            this.isProcessingPayment = false;
-            this.resetPaymentState();
-
             // Reset form
             this.resetForm();
+            this.resetPaymentState();
           })
           .catch(error => {
             console.error("Error creating booking:", error);
