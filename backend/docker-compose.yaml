@@ -46,6 +46,28 @@ services:
         condition: service_healthy
     networks:
       - medgrab_network
+  cancel_booking_service:
+    build:
+      context: .
+      dockerfile: composite/cancel_booking.Dockerfile
+    container_name: medgrab_cancel_booking_service
+    env_file:
+      - .env
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NOTIFICATION_ROUTING_KEY=notification.email
+    ports:
+      - "5005:5005"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      notification_service:
+        condition: service_started
+    networks:
+      - medgrab_network
 
 # NURSE
   nurse_service:
