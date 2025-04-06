@@ -60,7 +60,7 @@ services:
       - AMQP_EXCHANGE_TYPE=topic
       - NOTIFICATION_ROUTING_KEY=notification.email
     ports:
-      - "5005:5005"
+      - "5011:5011"
     depends_on:
       rabbitmq:
         condition: service_healthy

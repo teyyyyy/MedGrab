@@ -11,7 +11,7 @@ COPY composite/cancel_booking.py /app/composite/
 COPY .env /app/
 
 # Expose the port the app runs on
-EXPOSE 5005
+EXPOSE 5011
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
