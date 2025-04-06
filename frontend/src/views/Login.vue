@@ -12,97 +12,255 @@
       <form class="login-form" @submit.prevent="login">
         <h2>Log in to continue</h2>
 
-        <fieldset class="role-selection">
-          <legend class="visually-hidden">Select your role</legend>
-          <button
-              type="button"
-              @click="setRole('patient')"
-              :class="['role-btn', { active: role === 'patient' }]"
-              aria-pressed="role === 'patient'"
-          >
-            <span class="icon">👤</span>
-            <span>I'm a Patient</span>
-          </button>
-
-          <button
-              type="button"
-              @click="setRole('nurse')"
-              :class="['role-btn', { active: role === 'nurse' }]"
-              aria-pressed="role === 'nurse'"
-          >
-            <span class="icon">👩‍⚕️</span>
-            <span>I'm a Nurse</span>
-          </button>
-        </fieldset>
-
-        <transition name="fade">
-          <div v-if="role" class="user-input">
-            <div class="input-group">
-              <label for="userId">Your {{ role }} ID:</label>
-              <input
-                  type="text"
-                  id="userId"
-                  v-model="userId"
-                  :placeholder="`Enter your ${role} ID`"
-                  required
-                  autocomplete="off"
-              >
-            </div>
-
-            <button
-                type="submit"
-                :disabled="!userId"
-                class="submit-btn"
+        <div class="user-input">
+          <div class="input-group" :class="{ 'input-error': errorMessage }">
+            <label for="userId">Your ID:</label>
+            <input
+                type="text"
+                id="userId"
+                v-model="userId"
+                placeholder="Enter your ID"
+                required
+                autocomplete="off"
+                :disabled="isLoading || loginState === 'success'"
+                @input="clearError"
             >
-              <span v-if="!userId">Enter ID to continue</span>
-              <span v-else>Continue to Dashboard</span>
-            </button>
+            <span v-if="validationMessage" class="validation-message">{{ validationMessage }}</span>
           </div>
-        </transition>
+
+          <div v-if="errorMessage" class="error-message" :class="loginState">
+            <div class="error-icon">❌</div>
+            <p>{{ errorMessage }}</p>
+          </div>
+
+          <div v-if="loginState === 'success'" class="success-message">
+            <div class="success-icon">✅</div>
+            <p>Login successful! Redirecting...</p>
+          </div>
+
+          <div class="remember-me">
+            <input type="checkbox" id="rememberMe" v-model="rememberMe">
+            <label for="rememberMe">Remember me on this device</label>
+          </div>
+
+          <button
+              type="submit"
+              :disabled="!userId || isLoading || loginState === 'success'"
+              class="submit-btn"
+              :class="{ 'loading': isLoading }"
+          >
+            <span v-if="!userId">Enter ID to continue</span>
+            <span v-else-if="isLoading">
+              <div class="spinner"></div>
+              Checking...
+            </span>
+            <span v-else-if="loginState === 'success'">Login Successful</span>
+            <span v-else>Login</span>
+          </button>
+        </div>
       </form>
+
+      <div v-if="networkError" class="network-error">
+        <p>📶 Network connection issue detected. Please check your internet connection.</p>
+      </div>
 
       <footer class="login-footer">
         <p>&copy; 2025 MedGrab. All rights reserved.</p>
+        <div class="login-state-indicator">
+          <span class="state-dot" :class="loginState"></span>
+          <span class="state-text">{{ loginStateText }}</span>
+        </div>
       </footer>
     </div>
   </main>
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 
 export default {
   name: 'LoginView',
   setup() {
-    const role = ref('')
     const userId = ref('')
+    const errorMessage = ref('')
+    const validationMessage = ref('')
     const router = useRouter()
+    const isLoading = ref(false)
+    const loginState = ref('idle') // idle, loading, error, network-error, success
+    const networkError = ref(false)
+    const loginAttempts = ref(0)
+    const rememberMe = ref(false)
 
-    const setRole = (selectedRole) => {
-      role.value = selectedRole
+    // Check if there's a remembered ID
+    const checkSavedId = () => {
+      const savedId = localStorage.getItem('rememberedId')
+      if (savedId) {
+        userId.value = savedId
+      }
     }
 
-    const login = () => {
-      if (!role.value || !userId.value) return
+    // Call it on component mount
+    checkSavedId()
 
-      // Store user info in localStorage
-      localStorage.setItem('userRole', role.value)
+    const loginStateText = computed(() => {
+      switch (loginState.value) {
+        case 'idle': return 'Ready'
+        case 'loading': return 'Processing'
+        case 'error': return 'Login Failed'
+        case 'network-error': return 'Network Error'
+        case 'success': return 'Login Successful'
+        default: return ''
+      }
+    })
+
+    const clearError = () => {
+      errorMessage.value = ''
+      validationMessage.value = ''
+      if (loginState.value === 'error' || loginState.value === 'network-error') {
+        loginState.value = 'idle'
+      }
+      networkError.value = false
+    }
+
+    const validateUserId = () => {
+      // Basic validation - adjust as needed for your ID format
+      if (userId.value.length < 3) {
+        validationMessage.value = 'ID must be at least 3 characters'
+        return false
+      }
+      validationMessage.value = ''
+      return true
+    }
+
+    const login = async () => {
+      if (!userId.value) return
+      if (!validateUserId()) return
+
+      clearError()
+      isLoading.value = true
+      loginState.value = 'loading'
+      loginAttempts.value++
+
+      // If remember me is checked, save the ID
+      if (rememberMe.value) {
+        localStorage.setItem('rememberedId', userId.value)
+      } else {
+        localStorage.removeItem('rememberedId')
+      }
+
+      try {
+        // First, try to check if ID exists as a nurse
+        const nurseResult = await checkNurse(userId.value)
+
+        if (nurseResult.success) {
+          // User is a nurse
+          handleSuccessfulLogin('nurse')
+          return
+        }
+
+        // If not a nurse, check if ID exists as a patient
+        const patientResult = await checkPatient(userId.value)
+
+        if (patientResult.success) {
+          // User is a patient
+          handleSuccessfulLogin('patient')
+          return
+        }
+
+        // If we get here, the ID doesn't exist in either system
+        handleLoginError('ID not found. Please check and try again.')
+      } catch (error) {
+        console.error('Login error:', error)
+
+        // Check if it's a network error
+        if (!navigator.onLine || error.name === 'TypeError') {
+          networkError.value = true
+          loginState.value = 'network-error'
+          errorMessage.value = 'Network connection failed. Please check your internet connection.'
+        } else {
+          handleLoginError('Something went wrong. Please try again later.')
+        }
+      } finally {
+        isLoading.value = false
+      }
+    }
+
+    const handleSuccessfulLogin = (role) => {
+      loginState.value = 'success'
+
+      // Store user data
+      localStorage.setItem('userRole', role)
       localStorage.setItem('userId', userId.value)
 
-      // Redirect based on role
-      if (role.value === 'patient') {
-        router.push('/bookingcreator')
-      } else {
-        router.push('/report')
+      // Add a small delay for user to see success message
+      setTimeout(() => {
+        if (role === 'nurse') {
+          router.push('/report')
+        } else {
+          router.push('/bookingcreator')
+        }
+      }, 1000)
+    }
+
+    const handleLoginError = (message) => {
+      loginState.value = 'error'
+      errorMessage.value = message
+
+      // If too many failed attempts, add a suggestion
+      if (loginAttempts.value >= 3) {
+        errorMessage.value += ' If you\'re having trouble, please contact support.'
+      }
+    }
+
+    // Function to check if ID exists as a nurse
+    const checkNurse = async (id) => {
+      try {
+        const response = await fetch(`http://localhost:5003/api/nurses/${id}`)
+
+        if (response.ok) {
+          return { success: true, data: await response.json() }
+        }
+
+        return { success: false }
+      } catch (error) {
+        console.error('Nurse check error:', error)
+        return { success: false, error }
+      }
+    }
+
+    // Function to check if ID exists as a patient
+    const checkPatient = async (id) => {
+      try {
+        // Based on the booking.py file, this appears to be the patient API endpoint
+        const response = await fetch(`https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/GetPatient/${id}`)
+
+        if (response.ok) {
+          const data = await response.json()
+          // Check that we actually got patient data back
+          if (data && data.Patient) {
+            return { success: true, data }
+          }
+        }
+
+        return { success: false }
+      } catch (error) {
+        console.error('Patient check error:', error)
+        return { success: false, error }
       }
     }
 
     return {
-      role,
       userId,
-      setRole,
-      login
+      errorMessage,
+      validationMessage,
+      isLoading,
+      loginState,
+      loginStateText,
+      networkError,
+      rememberMe,
+      login,
+      clearError
     }
   }
 }
@@ -178,59 +336,6 @@ export default {
   text-align: center;
 }
 
-.role-selection {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  border: none;
-  padding: 0;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
-}
-
-.role-btn {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem;
-  border: 2px solid #e0e0e0;
-  background: white;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: 600;
-  transition: all 0.3s ease;
-}
-
-.role-btn .icon {
-  font-size: 1.8rem;
-  margin-bottom: 0.5rem;
-}
-
-.role-btn:hover {
-  border-color: #2D87D3;
-  transform: translateY(-2px);
-}
-
-.role-btn.active {
-  background: #2D87D3;
-  color: white;
-  border-color: #2D87D3;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(29, 118, 210, 0.2);
-}
-
 .user-input {
   display: flex;
   flex-direction: column;
@@ -263,6 +368,49 @@ export default {
   box-shadow: 0 0 0 3px rgba(29, 118, 210, 0.1);
 }
 
+.input-group.input-error input {
+  border-color: #e53935;
+}
+
+.validation-message {
+  color: #ff9800;
+  font-size: 0.85rem;
+}
+
+.error-message {
+  color: #e53935;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: rgba(229, 57, 53, 0.1);
+}
+
+.success-message {
+  color: #4caf50;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 8px;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #555;
+}
+
 .submit-btn {
   padding: 0.9rem;
   background: #4caf50;
@@ -273,6 +421,10 @@ export default {
   font-size: 1rem;
   cursor: pointer;
   transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
 }
 
 .submit-btn:hover:not(:disabled) {
@@ -285,41 +437,75 @@ export default {
   cursor: not-allowed;
 }
 
+.submit-btn.loading {
+  background: #8bc34a;
+}
+
+/* Spinner for loading state */
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Network Error */
+.network-error {
+  background: #ffecb3;
+  padding: 0.75rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  text-align: center;
+  color: #e65100;
+}
+
 /* Footer */
 .login-footer {
   text-align: center;
   font-size: 0.9rem;
   color: #777777;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-/* Animations */
-.fade-enter-active, .fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+.login-state-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
 }
 
-.fade-enter-from, .fade-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9e9e9e;
+}
+
+.state-dot.idle { background: #9e9e9e; }
+.state-dot.loading { background: #2196f3; animation: pulse 1.5s infinite; }
+.state-dot.error { background: #e53935; }
+.state-dot.network-error { background: #ff9800; }
+.state-dot.success { background: #4caf50; }
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
 }
 
 /* Responsive Adjustments */
 @media (max-width: 480px) {
   .login-form {
     padding: 1.5rem;
-  }
-
-  .role-selection {
-    flex-direction: column;
-  }
-
-  .role-btn {
-    flex-direction: row;
-    justify-content: center;
-  }
-
-  .role-btn .icon {
-    margin-bottom: 0;
-    margin-right: 0.5rem;
   }
 }
 </style>
