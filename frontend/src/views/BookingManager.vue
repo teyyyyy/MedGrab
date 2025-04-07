@@ -467,18 +467,23 @@ export default {
       if (this.searchQuery.trim()) {
         const query = this.searchQuery.toLowerCase();
         result = result.filter(booking => {
-          // Get patient name
-          const patient = this.patients.find(
-              p => p.PID === booking.fields.PID?.stringValue
-          );
+          const nurseMatch = this.nurses.find(
+              n => n.NID === booking.fields.NID?.stringValue
+          )?.name.toLowerCase().includes(query);
 
-          const patientMatch = patient?.Name?.toLowerCase().includes(query);
           const bidMatch = booking.fields.BID?.stringValue?.toLowerCase().includes(query);
           const notesMatch = booking.fields.Notes?.stringValue?.toLowerCase().includes(query);
 
-          return patientMatch || bidMatch || notesMatch;
+          return nurseMatch || bidMatch || notesMatch;
         });
       }
+
+      // Sort bookings by date & time (StartTime)
+      result.sort((a, b) => {
+        const timeA = new Date(a.fields.StartTime?.timestampValue || 0);
+        const timeB = new Date(b.fields.StartTime?.timestampValue || 0);
+        return timeA - timeB;
+      });
 
       return result;
     }
@@ -586,11 +591,12 @@ export default {
       this.setActionProcessing(this.selectedBookingId, true);
 
       const data = {
-        bid: this.selectedBookingId,
+        bookingId: this.selectedBookingId,
+        nurseId: this.selectedNurse.NID,  // Add the nurse ID from yer selected nurse
         reason: this.cancellationReason
       };
 
-      axios.post('http://localhost:5008/v1/CancelWithReason', data)
+      axios.post('http://localhost:5011/api/cancel-booking/nurse-cancel', data)
           .then(() => {
             this.showActionMessage("Sorted! Appointment cancelled and reassigned.", true);
             this.getBookings();

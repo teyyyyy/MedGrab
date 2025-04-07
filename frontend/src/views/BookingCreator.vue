@@ -130,12 +130,6 @@
                     <circle cx="12" cy="12" r="3"></circle>
                   </svg>
                 </button>
-                <button v-if="booking.fields.Status?.stringValue === 'Pending'" class="btn-icon btn-cancel" @click="cancelBooking(booking)" title="Cancel">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </button>
               </div>
             </td>
           </tr>
@@ -150,6 +144,23 @@
 
       <form @submit.prevent="createBooking">
         <!-- Date & Time Selection -->
+        <div class="time-restrictions-info">
+          <div class="info-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+          </div>
+          <div class="info-content">
+            <h4>Booking Time Restrictions</h4>
+            <ul>
+              <li>Appointments must be booked at least 24 hours in advance</li>
+              <li>Available hours: 9:00 AM - 11:00 PM</li>
+              <li>All appointments must end by 11:00 PM</li>
+            </ul>
+          </div>
+        </div>
         <div class="form-section">
           <h3 class="form-section-title">1. Choose Date & Time</h3>
 
@@ -167,12 +178,21 @@
               <VueDatePicker
                   inline
                   auto-apply
-                  time-picker-inline
+                  :disabled="isLoadingBookings"
+                  :enable-minutes="false"
                   id="startTime"
+                  :is24="true"
                   v-model="newBooking.StartTime"
+                  :minutes-increment="5"
                   :required="true"
                   :enableTimePicker="true"
                   :clearable="false"
+                  :min-date="minBookingDate"
+                  :min-time="minTimeLimit"
+                  :max-time="maxTimeLimit"
+                  :disabled-dates="getBookedDates()"
+                  :highlight-dates="getBookedDates()"
+                  :day-class="getDayClass"
                   placeholder="Select start time"
                   class="date-picker"
                   @update:modelValue="calculateEndTimeAndPayment"
@@ -183,28 +203,28 @@
             </div>
 
             <!-- Duration slider now gets its own row -->
-            <div class="form-group">
-              <label for="durationHours">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="input-icon">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <polyline points="12 6 12 12 16 14"></polyline>
-                </svg>
-                Duration (Hours)
-              </label>
-              <div class="slider-container">
-                <input
-                    type="range"
-                    id="durationHours"
-                    v-model="durationHours"
-                    min="1"
-                    max="12"
-                    step="1"
-                    class="duration-slider"
-                    @input="calculateEndTimeAndPayment"
-                >
-                <div class="duration-display">{{ durationHours }} {{ durationHours === 1 ? 'hour' : 'hours' }}</div>
-              </div>
+          <div class="form-group">
+            <label for="durationHours">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="input-icon">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              Duration (Hours)
+            </label>
+            <div class="slider-container">
+              <input
+                  type="range"
+                  id="durationHours"
+                  v-model="durationHours"
+                  min="1"
+                  :max="maxAllowedDuration"
+                  step="1"
+                  class="duration-slider"
+                  @input="calculateEndTimeAndPayment"
+              >
+              <div class="duration-display">{{ durationHours }} {{ durationHours === 1 ? 'hour' : 'hours' }}</div>
             </div>
+          </div>
 
             <div class="duration-summary" v-if="newBooking.StartTime && newBooking.EndTime">
               <div class="summary-row">
@@ -450,15 +470,6 @@
             </div>
           </div>
         </div>
-        <div class="modal-footer" v-if="selectedBooking && selectedBooking.fields.Status?.stringValue === 'Pending'">
-          <button class="btn-secondary" @click="cancelBooking(selectedBooking)">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-            Cancel Booking
-          </button>
-        </div>
       </div>
     </div>
     <div v-if="isProcessingPayment" class="payment-overlay">
@@ -574,6 +585,9 @@ export default {
       toastMessages: [], // Array to store toast notifications
       toastCounter: 0, // Counter for unique toast IDs
 
+      minTimeLimit: { hours: 9, minutes: 0 },  // 9:00 AM
+      maxTimeLimit: { hours: 23, minutes: 0 }, // 11:00 PM
+
       // New fields for duration-based booking
       durationHours: 1,
       baseRate: 20, // Base rate for 1 hour in dollars
@@ -611,6 +625,42 @@ export default {
     }
   },
   methods: {
+    findNextAvailableDay() {
+      // Start with tomorrow, ya get me?
+      let candidateDate = new Date();
+      candidateDate.setDate(candidateDate.getDate() + 1);
+      candidateDate.setHours(9, 0, 0, 0); // 9 AM sharp, innit
+
+      // We ain't checkin' more than 30 days, fuck that
+      const MAX_DAYS_TO_CHECK = 30;
+
+      // Loop through the next 30 days, ya get me?
+      for (let i = 0; i < MAX_DAYS_TO_CHECK; i++) {
+        // Check if this day's got bookings
+        const isBooked = this.bookings.some(booking => {
+          const bookingDate = new Date(booking.fields.StartTime?.timestampValue);
+          return (
+              bookingDate.getFullYear() === candidateDate.getFullYear() &&
+              bookingDate.getMonth() === candidateDate.getMonth() &&
+              bookingDate.getDate() === candidateDate.getDate()
+          );
+        });
+
+        // If it ain't booked, we found our fuckin' day!
+        if (!isBooked) {
+          return candidateDate;
+        }
+
+        // Move to the next day, ya slag
+        candidateDate.setDate(candidateDate.getDate() + 1);
+      }
+
+      // If everyfink's booked, just use tomorrow, fuck it
+      let tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(9, 0, 0, 0);
+      return tomorrow;
+    },
     validateForm() {
       // Reset validation errors
       this.validationErrors = {
@@ -625,6 +675,41 @@ export default {
       if (!this.newBooking.StartTime) {
         this.validationErrors.startTime = 'Please select a start time for your appointment';
         isValid = false;
+      } else {
+        // Check if start time is in the past
+        const now = new Date();
+        const startTime = new Date(this.newBooking.StartTime);
+
+        if (startTime < now) {
+          this.validationErrors.startTime = 'You cannot book appointments in the past';
+          isValid = false;
+        }
+
+        // Check if booking is within 24 hours
+        const minDate = new Date();
+        minDate.setHours(minDate.getHours() + 24);
+        if (startTime < minDate) {
+          this.validationErrors.startTime = 'Appointments must be booked at least 24 hours in advance';
+          isValid = false;
+        }
+
+        // Check time restrictions (9 AM - 11 PM)
+        const hours = startTime.getHours();
+        if (hours < this.minTimeLimit.hours || hours >= this.maxTimeLimit.hours) {
+          this.validationErrors.startTime = 'Appointment hours are limited to between 9 AM and 11 PM';
+          isValid = false;
+        }
+
+        // Check end time
+        if (this.newBooking.EndTime) {
+          const endTime = new Date(this.newBooking.EndTime);
+          const endHours = endTime.getHours();
+
+          if (endHours >= this.maxTimeLimit.hours && endTime.getMinutes() > 0) {
+            this.validationErrors.startTime = 'Appointments cannot end after 11 PM';
+            isValid = false;
+          }
+        }
       }
 
       // Validate notes
@@ -641,14 +726,36 @@ export default {
 
       return isValid;
     },
+    showTimeRestrictionInfo() {
+      this.showToast(
+          'Reminder: Appointments can only be booked between 9 AM and 11 PM, and must be scheduled at least 24 hours in advance.',
+          'info',
+          8000
+      );
+    },
     // Calculate end time based on start time and duration hours
     calculateEndTimeAndPayment() {
       if (!this.newBooking.StartTime) return;
+
+      // Ensure duration doesn't exceed maximum allowed
+      this.durationHours = Math.min(this.durationHours, this.maxAllowedDuration);
 
       // Create a new date object for end time by adding hours to start time
       const startTime = new Date(this.newBooking.StartTime);
       const endTime = new Date(startTime);
       endTime.setHours(startTime.getHours() + parseInt(this.durationHours));
+
+      // Check if end time exceeds 11 PM
+      const endHour = endTime.getHours();
+      if (endHour >= this.maxTimeLimit.hours || (endHour === 0 && endTime.getDate() > startTime.getDate())) {
+        // If it does, adjust duration to end at 11 PM
+        endTime.setHours(this.maxTimeLimit.hours);
+        endTime.setMinutes(0);
+
+        // Recalculate duration
+        const diffHours = (endTime - startTime) / (1000 * 60 * 60);
+        this.durationHours = Math.max(1, Math.floor(diffHours));
+      }
 
       // Update the end time
       this.newBooking.EndTime = endTime;
@@ -724,15 +831,18 @@ export default {
       this.createStripePayment();
     },
     createStripePayment() {
+      this.prepareForNewPayment();
+
+      // NOW set the overlay state
       this.isProcessingPayment = true;
-      this.paymentStep = 1; // Set to first step
+      this.paymentStep = 1;
       this.createMessage = "Setting up your secure payment...";
 
-      // Generate temporary booking ID if not already set
+      // Generate a COMPLETELY NEW BOOKING ID EVERY FUCKIN' TIME
       this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
 
       const paymentData = {
-        amount: this.calculatedPrice, // Use calculated price instead of manual input
+        amount: this.calculatedPrice,
         booking_id: this.tempBookingId,
         patient_id: this.selectedPatient.PID,
         nurse_id: this.selectedNurse.NID
@@ -741,33 +851,58 @@ export default {
       axios.post('http://localhost:5010/create-payment-link', paymentData)
           .then(response => {
             if (response.data.success) {
-              // Store the session ID for later verification
               this.paymentSessionId = response.data.session_id;
-              this.paymentStep = 2; // Move to second step
+              this.paymentStep = 2;
               this.createMessage = "Payment window opened. Please complete your payment.";
 
-              // Open payment in a popup window we can control
+              // Open payment in a BRAND FUCKIN' NEW window using vanilla JS
               const width = 550;
               const height = 650;
               const left = (window.screen.width / 2) - (width / 2);
               const top = (window.screen.height / 2) - (height / 2);
 
-              this.paymentWindow = window.open(
-                  response.data.payment_url,
-                  'stripe_checkout',
-                  `width=${width},height=${height},top=${top},left=${left},toolbar=no,location=no,status=no,menubar=no`
-              );
+              try {
+                // Open window WITHOUT assigning it yet
+                const newWindow = window.open(
+                    response.data.payment_url,
+                    'stripe_checkout_' + new Date().getTime(), // UNIQUE NAME EVERY TIME
+                    `width=${width},height=${height},top=${top},left=${left},toolbar=no,location=no,status=no,menubar=no`
+                );
 
-              // Add message listener for payment completion
-              window.addEventListener('message', this.handlePaymentMessage);
+                // NOW assign it to vue property on next tick
+                this.$nextTick(() => {
+                  this.paymentWindow = newWindow;
+                });
 
-              // Set interval just to check if window was closed manually
-              this.paymentCheckInterval = setInterval(() => {
-                if (this.paymentWindow && this.paymentWindow.closed) {
-                  clearInterval(this.paymentCheckInterval);
-                  this.onPaymentWindowClosed();
-                }
-              }, 500);
+                // Add message listener AFTER window creation
+                window.addEventListener('message', this.handlePaymentMessage);
+
+                // Set interval to check window status
+                this.paymentCheckInterval = setInterval(() => {
+                  try {
+                    // Add this check first - if we're already successful, don't check the window
+                    if (this.createSuccess || this.paymentStep >= 3) {
+                      console.log("Payment successful, stopping window checks");
+                      clearInterval(this.paymentCheckInterval);
+                      return;
+                    }
+
+                    if (this.paymentWindow && this.paymentWindow.closed) {
+                      console.log("Window detected as closed");
+                      this.onPaymentWindowClosed();
+                    }
+                  } catch (e) {
+                    // If we can't check, don't assume anything
+                    console.log("Can't check window state:", e);
+                  }
+                }, 1000); // Give it a full fuckin' second between checks
+
+              } catch (error) {
+                console.error("Error opening payment window:", error);
+                this.createMessage = "Couldn't open payment window. Please try again.";
+                this.createSuccess = false;
+                this.resetPaymentState();
+              }
             } else {
               this.createMessage = "Error creating payment link. Please try again.";
               this.createSuccess = false;
@@ -816,14 +951,17 @@ export default {
       }
     },
     onPaymentWindowClosed() {
-      // Clean up everything
-      this.resetPaymentState();
-
-      // Only set message if we were still processing
-      if (!this.createSuccess) {
-        this.createMessage = "Payment window closed. Please try again if your payment wasn't completed.";
-        this.showToast("Payment window closed. No payment was processed.", "info");
+      // DON'T RESET FUCK ALL if we're already successful or in step 3
+      if (this.createSuccess || this.paymentStep >= 3) {
+        console.log("Window closed but payment in progress - NOT resetting state");
+        return; // JUST FUCKIN' BAIL OUT - don't touch nuffink
       }
+
+      // Only if we're still in early steps and not successful, then we clean up
+      console.log("Window closed before payment completed - cleaning up");
+      this.resetPaymentState();
+      this.createMessage = "Payment window closed. Please try again if your payment wasn't completed.";
+      this.showToast("Payment window closed. No payment was processed.", "info");
     },
     checkPaymentStatus() {
       if (!this.paymentSessionId) {
@@ -869,21 +1007,25 @@ export default {
             this.createMessage = "Success! Your appointment has been booked and payment confirmed.";
             this.createSuccess = true;
 
-            this.isProcessingPayment = false;
+            // Use our new function instead
+            this.cleanupAfterSuccessfulPayment();
 
-            this.getBookings();
+            // Show toast and update UI
             this.showToast("Your appointment has been successfully booked!", "success");
+            this.getBookings();
 
-            // Reset form
-            this.resetForm();
-            this.resetPaymentState();
+            // Wait a bit before clearing the overlay
+            setTimeout(() => {
+              this.isProcessingPayment = false;
+              this.resetForm();
+            }, 2000);  // Give 'em 2 seconds to see the success message
           })
           .catch(error => {
             console.error("Error creating booking:", error);
             this.createMessage = "Payment was successful but there was an error creating the booking. Please contact support with reference: " + this.paymentSessionId;
             this.createSuccess = false;
             this.showToast("Error creating booking. Please contact support.", "error");
-            this.resetPaymentState(); // Add this line
+            this.resetPaymentState(); // This is fine for errors
           });
     },
     formatDateTime(timestamp) {
@@ -981,7 +1123,7 @@ export default {
       this.newBooking = {
         PID: '',
         NID: '',
-        StartTime: '',
+        StartTime: this.findNextAvailableDay(),
         EndTime: '',
         APIKey: '',
         Notes: '',
@@ -992,31 +1134,74 @@ export default {
       this.randomNurse();
     },
 
+    closePaymentWindowSafely() {
+      try {
+        const win = this.paymentWindow;
+        this.paymentWindow = null;
+
+        if (win && !win.closed) {
+          win.close();
+        }
+      } catch (e) {
+        console.log("Window's giving us grief:", e);
+      }
+    },
+
+    prepareForNewPayment() {
+      // Close any existing windows WITHOUT changing overlay state
+      this.closePaymentWindowSafely();
+
+      // Remove existing listeners
+      window.removeEventListener('message', this.handlePaymentMessage);
+
+      // Clear intervals
+      if (this.paymentCheckInterval) {
+        clearInterval(this.paymentCheckInterval);
+        this.paymentCheckInterval = null;
+      }
+
+      // Fresh booking ID every time
+      this.tempBookingId = 'BID-' + Math.random().toString(36).substring(2, 11).toUpperCase();
+    },
+
     resetPaymentState() {
-      // Reset all payment-related variables
-      this.tempBookingId = null;
-      this.paymentSessionId = null;
+      // Close window first
+      this.closePaymentWindowSafely();
+
+      // THEN set overlay gone
       this.isProcessingPayment = false;
-      this.isCreatingBooking = false;
-      this.paymentStep = 1;
 
-      this.createSuccess = false;
-      this.createMessage = '';
-
-      // Clean up any lingering event listeners or intervals
+      // Clean up all listeners
       window.removeEventListener('message', this.handlePaymentMessage);
       if (this.paymentCheckInterval) {
         clearInterval(this.paymentCheckInterval);
         this.paymentCheckInterval = null;
       }
 
-      // If payment window is still open, close it
-      if (this.paymentWindow && !this.paymentWindow.closed) {
-        this.paymentWindow.close();
-        this.paymentWindow = null;
+      // Reset everything else
+      this.tempBookingId = null;
+      this.paymentSessionId = null;
+      this.isCreatingBooking = false;
+      this.paymentStep = 1;
+      this.createSuccess = false;
+      this.createMessage = '';
+    },
+    // ADD THIS NEW FUNCTION
+    cleanupAfterSuccessfulPayment() {
+      // Just close window and clean up listeners - DON'T TOUCH THE OVERLAY
+      this.closePaymentWindowSafely();
+      window.removeEventListener('message', this.handlePaymentMessage);
+      if (this.paymentCheckInterval) {
+        clearInterval(this.paymentCheckInterval);
+        this.paymentCheckInterval = null;
       }
 
-      console.log("Payment state has been reset completely");
+      // Clear just these bits, NOT the overlay state
+      this.tempBookingId = null;
+      this.paymentSessionId = null;
+      this.isCreatingBooking = false;
+
+      console.log("Cleaned up payment resources but kept overlay VISIBLE");
     },
 
 // For booking table filtering
@@ -1053,6 +1238,9 @@ export default {
           .get('https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/GetBookingsFromUser/' + this.selectedPatient.PID)
           .then(response => {
             this.bookings = response.data.Bookings || [];
+
+            // RIGHT 'ERE! Set the next available day after we've got the bookings
+            this.newBooking.StartTime = this.findNextAvailableDay();
           })
           .catch(error => {
             console.error("Error fetching bookings:", error);
@@ -1114,6 +1302,13 @@ export default {
           });
     },
 
+    mounted() {
+      // Show time restriction info after component is mounted
+      this.$nextTick(() => {
+        this.showTimeRestrictionInfo();
+      });
+    },
+
     createBooking() {
       this.resetPaymentState();
       // Validate the form first
@@ -1140,6 +1335,32 @@ export default {
         var ranNum = Math.floor(Math.random() * (this?.nurses?.length - 1 + 1))
         this.newBooking.NID = this?.nurses[ranNum]?.NID;
         this.selectedNurse = this?.nurses[ranNum];
+      }
+    },
+    getBookedDates() {
+      // This'll be a fackin' array of all yer booked dates, ya get me?
+      return this.bookings.map(booking => {
+        const startTime = new Date(booking.fields.StartTime?.timestampValue);
+        return new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate());
+      });
+    },
+    getDayClass(day) {
+      // Check if the day 'as a fackin' booking on it
+      const date = new Date(day.year, day.month - 1, day.day);
+      const isBooked = this.getBookedDates().some(bookedDate =>
+          bookedDate.getFullYear() === date.getFullYear() &&
+          bookedDate.getMonth() === date.getMonth() &&
+          bookedDate.getDate() === date.getDate()
+      );
+
+      // Return yer custom CSS class if it's booked
+      return isBooked ? 'booked-date' : '';
+    }
+  },
+  watch: {
+    'newBooking.StartTime': function(newTime) {
+      if (newTime) {
+        this.calculateEndTimeAndPayment();
       }
     }
   },
@@ -1182,6 +1403,23 @@ export default {
     this.getAllNurses();
   },
   computed: {
+    minBookingDate() {
+      const minDate = new Date();
+      minDate.setHours(minDate.getHours() + 24); // Add 24 hours to current time
+      return minDate;
+    },
+    maxAllowedDuration() {
+      if (!this.newBooking.StartTime) return 12; // Default max
+
+      const startDate = new Date(this.newBooking.StartTime);
+      const startHour = startDate.getHours();
+
+      // Calculate how many hours until 11 PM
+      const hoursUntilClose = this.maxTimeLimit.hours - startHour;
+
+      // If less than 1 hour until closing, show at least 1 hour
+      return Math.max(1, hoursUntilClose);
+    },
     filteredBookings() {
       let result = [...this.bookings];
 
@@ -1206,6 +1444,13 @@ export default {
           return nurseMatch || bidMatch || notesMatch;
         });
       }
+
+      // Sort bookings by date & time (StartTime)
+      result.sort((a, b) => {
+        const timeA = new Date(a.fields.StartTime?.timestampValue || 0);
+        const timeB = new Date(b.fields.StartTime?.timestampValue || 0);
+        return timeA - timeB;
+      });
 
       return result;
     }
@@ -2654,5 +2899,60 @@ tr:hover {
 .toast-leave-to {
   opacity: 0;
   transform: translateX(40px);
+}
+.time-restrictions-info {
+  display: flex;
+  background-color: #eff6ff; /* Light blue background */
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  border-left: 4px solid #3b82f6; /* Blue accent */
+}
+
+.info-icon {
+  color: #3b82f6;
+  margin-right: 12px;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+}
+
+.info-content {
+  flex: 1;
+}
+
+.info-content h4 {
+  margin: 0 0 8px 0;
+  color: #1e40af;
+  font-size: 15px;
+}
+
+.info-content ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #334155;
+  font-size: 14px;
+}
+
+.info-content li {
+  margin-bottom: 4px;
+}
+
+.info-content li:last-child {
+  margin-bottom: 0;
+}
+.booked-date {
+  background-color: #fef2f2 !important; /* Light red background */
+  color: #b91c1c !important;
+  border: 1px solid #fecaca !important;
+  position: relative;
+}
+
+.booked-date::after {
+  content: "🔒";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
 }
 </style>
