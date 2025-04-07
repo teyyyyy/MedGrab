@@ -57,27 +57,43 @@ def get_nurse_details(nid):
 def get_bookings_for_month(nid, year, month):
     """Get all bookings for a nurse in a specific month"""
     try:
-        # Format dates for filter
-        start_date = f"{year}-{month:02d}-01T00:00+08:00"
-        if month == 12:
-            end_date = f"{year+1}-01-01T00:00+08:00"
-        else:
-            end_date = f"{year}-{month+1:02d}-01T00:00+08:00"
-        
-        print(f"Calling Booking Service at: {BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}")
-        response = requests.get(
-            f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}",
-            params={"startAfter": start_date, "endBefore": end_date}
-        )
+        # First get all bookings for the nurse
+        response = requests.get(f"{BOOKING_SERVICE_URL}/GetBookingsForNurse/{nid}")
         
         if response.status_code == 200:
-            # Parse the response JSON
-            response_data = response.json()
+            all_bookings = response.json().get('Bookings', [])
+            filtered_bookings = []
             
-            # Extract the 'Bookings' array
-            bookings = response_data.get('Bookings', [])
-            return bookings
-        
+            # Filter bookings by month locally
+            for booking in all_bookings:
+                try:
+                    # Get the start time from booking fields
+                    start_time_str = booking.get('fields', {}).get('StartTime', {}).get('timestampValue', '')
+                    if not start_time_str:
+                        continue
+                        
+                    # Parse the timestamp
+                    start_time = datetime.datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                    
+                    # Check if it's in the requested month/year
+                    if start_time.year == year and start_time.month == month:
+                        # Store both the booking and its datetime for sorting
+                        filtered_bookings.append({
+                            'booking': booking,
+                            'start_time': start_time
+                        })
+                        
+                except (ValueError, TypeError) as e:
+                    print(f"Error parsing booking time: {e}")
+                    continue
+            
+            # Sort bookings by start time
+            filtered_bookings.sort(key=lambda x: x['start_time'])
+            
+            print(f"Found {len(filtered_bookings)} bookings for {month}/{year}")
+            # Return just the booking objects in sorted order
+            return [item['booking'] for item in filtered_bookings]
+            
         print(f"Booking service returned status code {response.status_code}")
         return []
     except requests.RequestException as e:
