@@ -499,7 +499,7 @@ export default {
     getCurrentNurse() {
       this.isLoadingNurses = true;
 
-      axios.get(`http://localhost:5003/api/nurses/${localStorage.getItem('userId')}`)
+      axios.get(`http://localhost:8000/api/nurses/${localStorage.getItem('userId')}`)
           .then(response => {
             this.selectedNurse = response.data;
             this.login();
@@ -516,7 +516,7 @@ export default {
     getAllNurses() {
       this.isLoadingNurses = true;
 
-      axios.get('http://localhost:5003/api/nurses/')
+      axios.get('http://localhost:8000/api/nurses/')
           .then(response => {
             this.nurses = response.data;
             this.selectedNurse = this.nurses.find((element) => element.NID === localStorage.getItem('userId'));
@@ -596,7 +596,7 @@ export default {
         reason: this.cancellationReason
       };
 
-      axios.post('http://localhost:5011/api/cancel-booking/nurse-cancel', data)
+      axios.post('http://localhost:8000/api/cancel-booking/nurse-cancel', data)
           .then(() => {
             this.showActionMessage("Sorted! Appointment cancelled and reassigned.", true);
             this.getBookings();

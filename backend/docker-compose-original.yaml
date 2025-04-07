@@ -1,0 +1,323 @@
+version: '3'
+# RABBITMQ
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: medgrab_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - medgrab_network
+
+###################################
+  # ATOMIC
+###################################
+
+# NOTIFICATION
+  notification_service:
+    build:
+      context: .
+      dockerfile: atomic/notification/notification.Dockerfile
+    container_name: medgrab_notification_service
+    env_file:
+      - .env
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NOTIFICATION_ROUTING_KEY=notification.email
+      - NOTIFICATION_QUEUE=email_notifications
+    ports:
+      - "5002:5002"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - medgrab_network
+  cancel_booking_service:
+    build:
+      context: .
+      dockerfile: composite/cancel_booking.Dockerfile
+    container_name: medgrab_cancel_booking_service
+    env_file:
+      - .env
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NOTIFICATION_ROUTING_KEY=notification.email
+    ports:
+      - "5011:5011"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      notification_service:
+        condition: service_started
+    networks:
+      - medgrab_network
+
+# NURSE
+  nurse_service:
+    build:
+      context: .
+      dockerfile: atomic/nurse/nurse.Dockerfile
+    container_name: medgrab_nurse_service
+    env_file:
+      - .env
+    ports:
+      - "5003:5003"
+    networks:
+      - medgrab_network
+# REPORT
+  report_service:
+    build:
+      context: .
+      dockerfile: atomic/report/report.Dockerfile
+    container_name: medgrab_report_service
+    env_file:
+      - .env
+    ports:
+      - "5004:5004"
+    networks:
+      - medgrab_network
+
+  stripe_service:
+    build:
+      context: .
+      dockerfile: atomic/stripeatomic/stripeatomic.Dockerfile
+    container_name: medgrab_stripe_service
+    env_file:
+      - .env
+    ports:
+      - "5010:5010"
+    networks:
+      - medgrab_network
+
+###################################
+  # COMPOSITE
+###################################
+
+# GENERATE REPORT
+  generate_report:
+    build:
+      context: .
+      dockerfile: composite/generate_report.Dockerfile
+    container_name: medgrab_generate_service
+    ports:
+      - "5005:5005"
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq  
+      - AMQP_PORT=5672              
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
+      - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
+      - REPORT_SERVICE_URL=http://report_service:5004/api/reports
+    depends_on:
+      - rabbitmq
+    networks:
+      - medgrab_network
+
+  booking_composite:
+    build:
+      context: .
+      dockerfile: composite/bookcomp.Dockerfile
+    container_name: medgrab_booking_service
+    env_file:
+      - .env
+    ports:
+      - "5008:5008"
+    environment:
+      - AMQP_HOST=medgrab_rabbitmq
+      - AMQP_PORT=5672
+      - AMQP_EXCHANGE=medgrab_exchange
+      - AMQP_EXCHANGE_TYPE=topic
+      - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
+      - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
+      - REPORT_SERVICE_URL=http://report_servicee:5004/api/reports
+    depends_on:
+      - rabbitmq
+    networks:
+      - medgrab_network
+
+volumes:
+  rabbitmq_data:
+
+networks:
+  medgrab_network:
+    driver: bridge
+
+
+# version: '3'
+
+# volumes:
+#   rabbitmq_data:
+#   pgdata:
+#     name: medgrab_pgdata 
+
+# networks:
+#   medgrab_network:
+#     driver: bridge
+
+# services:
+#   #######################################
+#   # Kong  
+#   #######################################
+#   # kong-database:
+#   #   image: postgres:17.4
+#   #   restart: always
+#   #   networks:
+#   #     - medgrab_network
+#   #   environment:
+#   #     POSTGRES_DB: kong
+#   #     POSTGRES_USER: kong
+#   #     POSTGRES_PASSWORD: password
+#   #   healthcheck:
+#   #     test: ["CMD", "pg_isready", "-U", "kong"]
+#   #     interval: 10s
+#   #     timeout: 5s
+#   #     retries: 5
+#   #   volumes:
+#   #     - pgdata:/var/lib/postgresql/data
+
+#   # kong-migration:
+#   #   image: kong/kong-gateway:3.9
+#   #   command: "kong migrations bootstrap"
+#   #   restart: on-failure
+#   #   networks:
+#   #     - medgrab_network
+#   #   environment:
+#   #     KONG_DATABASE: postgres
+#   #     KONG_PG_HOST: kong-database
+#   #     KONG_PG_USER: kong
+#   #     KONG_PG_PASSWORD: password
+#   #   depends_on:
+#   #     kong-database:
+#   #       condition: service_healthy
+
+#   # kong:
+#   #   image: kong/kong-gateway:3.9
+#   #   restart: always
+#   #   networks:
+#   #     - medgrab_network
+#   #   environment:
+#   #     KONG_DATABASE: postgres
+#   #     KONG_PG_HOST: kong-database
+#   #     KONG_PG_USER: kong
+#   #     KONG_PG_PASSWORD: password
+#   #     KONG_PROXY_ACCESS_LOG: /dev/stdout
+#   #     KONG_ADMIN_ACCESS_LOG: /dev/stdout
+#   #     KONG_PROXY_ERROR_LOG: /dev/stderr
+#   #     KONG_ADMIN_ERROR_LOG: /dev/stderr
+#   #     KONG_ADMIN_LISTEN: 0.0.0.0:8001
+#   #     KONG_ADMIN_GUI_URL: http://localhost:8002
+#   #   depends_on:
+#   #     kong-migration:
+#   #       condition: service_completed_successfully
+#   #   ports:
+#   #     - "8000:8000"  # Proxy port
+#   #     - "8001:8001"  # Admin API
+#   #     - "8002:8002"  # Kong Manager GUI
+#   #     - "8443:8443"  # SSL proxy
+#   #     - "8444:8444"  # Admin SSL
+
+#   #######################################
+#   # RabbitMQ
+#   #######################################
+#   rabbitmq:
+#     image: rabbitmq:3.12-management
+#     container_name: medgrab_rabbitmq
+#     ports:
+#       - "5672:5672"
+#       - "15672:15672"
+#     environment:
+#       - RABBITMQ_DEFAULT_USER=guest
+#       - RABBITMQ_DEFAULT_PASS=guest
+#     volumes:
+#       - rabbitmq_data:/var/lib/rabbitmq
+#     healthcheck:
+#       test: ["CMD", "rabbitmqctl", "status"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 5
+#     networks:
+#       - medgrab_network
+  
+#   #######################################
+#   # Atomic Services
+#   #######################################
+#   # Notification
+#   notification_service:
+#     build:
+#       context: .
+#       dockerfile: atomic/notification/notification.stripeatomic.Dockerfile
+#     container_name: medgrab_notification_service
+#     env_file:
+#       - .env
+#     environment:
+#       - AMQP_HOST=medgrab_rabbitmq
+#       - AMQP_PORT=5672
+#       - AMQP_EXCHANGE=medgrab_exchange
+#       - AMQP_EXCHANGE_TYPE=topic
+#       - NOTIFICATION_ROUTING_KEY=notification.email
+#       - NOTIFICATION_QUEUE=email_notifications
+#     depends_on:
+#       rabbitmq:
+#         condition: service_healthy
+#     networks:
+#       - medgrab_network
+
+#   # Nurse
+#   nurse_service:
+#     build:
+#       context: .
+#       dockerfile: atomic/nurse/nurse.stripeatomic.Dockerfile
+#     container_name: medgrab_nurse_service
+#     env_file:
+#       - .env
+#     networks:
+#       - medgrab_network
+
+#   # Report
+#   report_service:
+#     build:
+#       context: .
+#       dockerfile: atomic/report/report.stripeatomic.Dockerfile
+#     container_name: medgrab_report_service
+#     env_file:
+#       - .env
+#     networks:
+#       - medgrab_network
+
+#   #######################################
+#   # Composite Services
+#   #######################################
+#   generate_report:
+#     build:
+#       context: .
+#       dockerfile: composite/generate_report.stripeatomic.Dockerfile
+#     container_name: medgrab_generate_service
+#     environment:
+#       - NURSE_SERVICE_URL=http://nurse_service:5003/api/nurses
+#       - BOOKING_SERVICE_URL=https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1
+#       - REPORT_SERVICE_URL=http://report_service:5004/api/reports
+#     depends_on:
+#       rabbitmq:
+#         condition: service_healthy
+#     networks:
+#       - medgrab_network
+
+

@@ -663,7 +663,7 @@ export default {
 
         // Step 1: Initiate the booking process with the backend
         const response = await axios.post(
-            'http://localhost:5008/v1/InitiateBookingWithPayment',
+            'http://localhost:8000/v1/InitiateBookingWithPayment',
             this.newBooking
         );
 
@@ -704,6 +704,7 @@ export default {
       try {
         // Close any existing payment window
         this.closePaymentWindowSafely();
+        this.paymentWindow = null;
 
         // Open new window
         this.paymentWindow = window.open(
@@ -744,7 +745,7 @@ export default {
 
         try {
           const response = await axios.get(
-              `http://localhost:5008/v1/CheckPaymentStatus/${this.currentSessionId}`
+              `http://localhost:8000/v1/CheckPaymentStatus/${this.currentSessionId}`
           );
 
           if (response.data.success) {
@@ -867,6 +868,7 @@ export default {
     },
 
     closePaymentModal() {
+      window.location.reload();
       this.resetPaymentState();
       this.resetForm();
     },
@@ -1251,7 +1253,7 @@ export default {
       this.isLoadingNurses = true;
 
       axios
-          .get('http://localhost:5003/api/nurses/')
+          .get('http://localhost:8000/api/nurses/')
           .then(response => {
             this.nurses = response.data;
             this.randomNurse();

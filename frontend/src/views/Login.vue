@@ -216,7 +216,7 @@ export default {
     // Function to check if ID exists as a nurse
     const checkNurse = async (id) => {
       try {
-        const response = await fetch(`http://localhost:5003/api/nurses/${id}`)
+        const response = await fetch(`http://localhost:8000/api/nurses/${id}`)
 
         if (response.ok) {
           return { success: true, data: await response.json() }

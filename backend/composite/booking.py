@@ -33,6 +33,7 @@ class ServiceConfig:
     API_KEY: str
     COMPLETION_CREDIT_BONUS: int  # Added configurable credit bonus for completion
     STRIPE_SERVICE_URL: str  # URL for Stripe service
+    EXTERNAL_BASE_URL: str
 
 
 @dataclass
@@ -53,12 +54,13 @@ class Config:
     def get_service_config() -> ServiceConfig:
         """Get service configuration from environment variables."""
         return ServiceConfig(
-            MAIN_URL=os.environ.get('MAIN_URL', 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/'),
-            NURSE_URL=os.environ.get('NURSE_URL', 'http://host.docker.internal:5003/'),
-            PATIENT_URL=os.environ.get('PATIENT_URL', 'https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/'),
+            MAIN_URL=os.environ.get('BOOKING_ATOMIC_MAIN_URL', 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/'),
+            NURSE_URL=os.environ.get('BOOKING_NURSE_ATOMIC_URL', 'http://host.docker.internal:5003/'),
+            PATIENT_URL=os.environ.get('PATIENT_ATOMIC_URL', 'https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/'),
             API_KEY=os.environ.get('BOOKING_API_KEY', ''),
             COMPLETION_CREDIT_BONUS=int(os.environ.get('COMPLETION_CREDIT_BONUS', 2)),  # Default to +2 points
-            STRIPE_SERVICE_URL=os.environ.get('STRIPE_SERVICE_URL', 'http://host.docker.internal:5010/')
+            STRIPE_SERVICE_URL=os.environ.get('STRIPE_SERVICE_URL', 'http://host.docker.internal:5010/'),
+            EXTERNAL_BASE_URL = os.environ.get('EXTERNAL_BASE_URL', 'http://localhost:5173')
         )
 
     @staticmethod
@@ -463,7 +465,7 @@ class BookingManager:
                 raise ApiError(f'Missing required field: {field}', 400)
 
         # Success callback URL - where to redirect after successful payment
-        callback_url = f"{request.host_url}v1/payment-callback"
+        callback_url = f"http://localhost:8000/v1/payment-callback"
 
         # Create payment session with Stripe
         try:

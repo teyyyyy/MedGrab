@@ -161,7 +161,7 @@ export default {
       error.value = null
 
       try {
-        const response = await axios.get(`http://localhost:5004/api/reports/${nurseId.value}`)
+        const response = await axios.get(`http://localhost:8000/api/reports/${nurseId.value}`)
         reports.value = response.data.sort((a, b) => {
           return new Date(b.reportMonth) - new Date(a.reportMonth)
         })
@@ -176,7 +176,7 @@ export default {
     async function viewReport(report) {
       try {
         const response = await axios.get(
-          `http://localhost:5004/api/reports/${nurseId.value}/${report.reportMonth}`
+          `http://localhost:8000/api/reports/${nurseId.value}/${report.reportMonth}`
         )
         reportContent.value = response.data.reportContent
         selectedReport.value = report
@@ -221,7 +221,7 @@ export default {
         };
 
         const response = await axios.post(
-          'http://localhost:5005/api/generate_report/graphql',
+          'http://localhost:8000/api/generate_report/graphql',
           { query, variables },
           { headers: { 'Content-Type': 'application/json' } }
         );

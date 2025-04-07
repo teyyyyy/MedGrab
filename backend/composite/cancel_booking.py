@@ -20,8 +20,8 @@ import datetime
 load_dotenv()
 
 # Service URLs - Update these based on deployment
-NURSE_SERVICE_URL = 'http://host.docker.internal:5003/api/nurses'
-BOOKING_SERVICE_URL = 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1'
+NURSE_SERVICE_URL=os.environ.get('NURSE_ATOMIC_URL', 'http://host.docker.internal:5003/')
+BOOKING_SERVICE_URL=os.environ.get('BOOKING_ATOMIC_MAIN_URL', 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/')
 API_KEY = os.getenv('BOOKING_API_KEY')
 
 cancel_booking_bp = Blueprint('cancel_booking', __name__)
@@ -31,8 +31,8 @@ cancel_booking_bp = Blueprint('cancel_booking', __name__)
 def get_booking_details(bid):
     """Get booking details from booking service"""
     try:
-        print(f"Getting booking details: {BOOKING_SERVICE_URL}/GetBooking/{bid}")
-        response = requests.get(f"{BOOKING_SERVICE_URL}/GetBooking/{bid}")
+        print(f"Getting booking details: {BOOKING_SERVICE_URL}GetBooking/{bid}")
+        response = requests.get(f"{BOOKING_SERVICE_URL}GetBooking/{bid}")
 
         if response.status_code == 200:
             booking_data = response.json()
@@ -48,8 +48,8 @@ def get_booking_details(bid):
 def get_all_bookings():
     """Get all bookings"""
     try:
-        print(f"Getting all bookings: {BOOKING_SERVICE_URL}/GetAllBookings")
-        response = requests.get(f"{BOOKING_SERVICE_URL}/GetAllBookings")
+        print(f"Getting all bookings: {BOOKING_SERVICE_URL}GetAllBookings")
+        response = requests.get(f"{BOOKING_SERVICE_URL}GetAllBookings")
 
         if response.status_code == 200:
             bookings_data = response.json()
@@ -85,9 +85,9 @@ def cancel_booking_with_reason(bid, reason):
             "Reason": reason
         }
 
-        print(f"Calling Booking Service to cancel: {BOOKING_SERVICE_URL}/CancelWithReason/{bid}")
+        print(f"Calling Booking Service to cancel: {BOOKING_SERVICE_URL}CancelWithReason/{bid}")
         response = requests.post(
-            f"{BOOKING_SERVICE_URL}/CancelWithReason/{bid}",
+            f"{BOOKING_SERVICE_URL}CancelWithReason/{bid}",
             json=data
         )
 
@@ -106,8 +106,8 @@ def cancel_booking_with_reason(bid, reason):
 def get_nurse_details(nid):
     """Get nurse details from nurse service"""
     try:
-        print(f"Getting nurse details: {NURSE_SERVICE_URL}/{nid}")
-        response = requests.get(f"{NURSE_SERVICE_URL}/{nid}")
+        print(f"Getting nurse details: {NURSE_SERVICE_URL}{nid}")
+        response = requests.get(f"{NURSE_SERVICE_URL}{nid}")
 
         if response.status_code == 200:
             nurse_data = response.json()
@@ -123,8 +123,8 @@ def get_nurse_details(nid):
 def get_all_nurses():
     """Get all available nurses"""
     try:
-        print(f"Getting all nurses: {NURSE_SERVICE_URL}/")
-        response = requests.get(f"{NURSE_SERVICE_URL}/")
+        print(f"Getting all nurses: {NURSE_SERVICE_URL}")
+        response = requests.get(f"{NURSE_SERVICE_URL}")
 
         if response.status_code == 200:
             nurses_data = response.json()
@@ -151,9 +151,9 @@ def create_booking_from_cancellation(PID, NID, StartTime, EndTime, Notes, Paymen
             "CancellationCount": CancellationCount
         }
 
-        print(f"Creating booking from cancellation: {BOOKING_SERVICE_URL}/CreateBookingFromCancellation")
+        print(f"Creating booking from cancellation: {BOOKING_SERVICE_URL}CreateBookingFromCancellation")
         response = requests.post(
-            f"{BOOKING_SERVICE_URL}/CreateBookingFromCancellation",
+            f"{BOOKING_SERVICE_URL}CreateBookingFromCancellation",
             json=data
         )
 
@@ -176,8 +176,8 @@ def update_nurse_credit_score(nid, credit_change, reason):
             "creditChange": credit_change,
             "reason": reason
         }
-        print(f"Updating nurse credit score: {NURSE_SERVICE_URL}/{nid}/credit")
-        response = requests.put(f"{NURSE_SERVICE_URL}/{nid}/credit", json=data)
+        print(f"Updating nurse credit score: {NURSE_SERVICE_URL}{nid}/credit")
+        response = requests.put(f"{NURSE_SERVICE_URL}{nid}/credit", json=data)
 
         if response.status_code == 200:
             result = response.json()
@@ -197,7 +197,7 @@ def increase_nurse_credit_score(nid, booking_id):
         "reason": f"Booking acceptance: {booking_id}"
     }
     try:
-        response = requests.put(f"{NURSE_SERVICE_URL}/{nid}/credit", json=credit_data)
+        response = requests.put(f"{NURSE_SERVICE_URL}{nid}/credit", json=credit_data)
         if response.status_code == 200:
             return response.json(), True
         return {"error": "Failed to update credit score"}, False
@@ -208,8 +208,8 @@ def increase_nurse_credit_score(nid, booking_id):
 def check_nurse_status(nid):
     """Check and update nurse warning/suspension status"""
     try:
-        print(f"Checking nurse status: {NURSE_SERVICE_URL}/{nid}/check-status")
-        response = requests.post(f"{NURSE_SERVICE_URL}/{nid}/check-status")
+        print(f"Checking nurse status: {NURSE_SERVICE_URL}{nid}/check-status")
+        response = requests.post(f"{NURSE_SERVICE_URL}{nid}/check-status")
         if response.status_code == 200:
             return response.json()
         return None
