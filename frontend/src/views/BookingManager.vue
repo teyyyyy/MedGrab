@@ -24,8 +24,12 @@
           <span class="stat-label">Pending</span>
         </div>
         <div class="stat-card">
-          <span class="stat-number">{{ bookings.filter(b => b.fields.Status?.stringValue === 'Accepted').length }}</span>
-          <span class="stat-label">Accepted</span>
+          <span class="stat-number">{{ bookings.filter(b => b.fields.Status?.stringValue === 'Completed').length }}</span>
+          <span class="stat-label">Completed</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-number">{{ bookings.filter(b => b.fields.Status?.stringValue === 'Cancelled').length }}</span>
+          <span class="stat-label">Cancelled</span>
         </div>
       </div>
     </header>
@@ -79,7 +83,6 @@
             <select v-model="statusFilter" class="filter-select">
               <option value="all">All Statuses</option>
               <option value="Pending">Pending</option>
-              <option value="Accepted">Accepted</option>
               <option value="Completed">Completed</option>
               <option value="Cancelled">Cancelled</option>
             </select>
@@ -146,9 +149,9 @@
 
             <!-- Status -->
             <td>
-          <span :class="['status-badge', getStatusClass(booking.fields.Status?.stringValue)]">
-            {{ booking.fields.Status?.stringValue }}
-          </span>
+              <span :class="['status-badge', getStatusClass(booking.fields.Status?.stringValue)]">
+                {{ booking.fields.Status?.stringValue }}
+              </span>
             </td>
 
             <!-- Notes -->
@@ -170,53 +173,20 @@
             <td>
               <!-- Pending Booking Actions -->
               <div v-if="booking.fields.Status?.stringValue === 'Pending'" class="action-buttons">
-                <button @click="acceptBooking(booking.fields.BID?.stringValue)" class="btn-accept" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
-                  <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
-                  <span v-else>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </span>
-                  Accept
-                </button>
-                <button @click="rejectBooking(booking.fields.BID?.stringValue)" class="btn-reject" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
-                  <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
-                  <span v-else>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </span>
-                  Reject
-                </button>
-              </div>
-
-              <!-- Accepted Booking Actions -->
-              <div v-else-if="booking.fields.Status?.stringValue === 'Accepted'" class="action-buttons">
-                <button @click="completeBooking(booking.fields.BID?.stringValue)" class="btn-complete" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
-                  <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
-                  <span v-else>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                  <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                </svg>
-              </span>
-                  Complete
-                </button>
                 <button @click="cancelBooking(booking.fields.BID?.stringValue)" class="btn-cancel" :disabled="isActionProcessing(booking.fields.BID?.stringValue)">
                   <span v-if="isActionProcessing(booking.fields.BID?.stringValue)" class="input-loader"></span>
                   <span v-else>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <line x1="15" y1="9" x2="9" y2="15"></line>
-                  <line x1="9" y1="9" x2="15" y2="15"></line>
-                </svg>
-              </span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10"></circle>
+                      <line x1="15" y1="9" x2="9" y2="15"></line>
+                      <line x1="9" y1="9" x2="15" y2="15"></line>
+                    </svg>
+                  </span>
                   Cancel
                 </button>
               </div>
 
-              <!-- View Details for Completed/Cancelled -->
+              <!-- View Details for Other Statuses -->
               <button v-else class="btn-details" @click="viewBookingDetails(booking)">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="11" cy="11" r="8"></circle>
@@ -230,24 +200,6 @@
         </table>
       </div>
     </section>
-<!--
-    &lt;!&ndash; Schedule Section &ndash;&gt;
-    <section class="schedule-section">
-      <h2>Your Schedule</h2>
-      <div class="calendar-wrapper">
-        &lt;!&ndash; Calendar placeholder - would integrate with a calendar component &ndash;&gt;
-        <div class="calendar-placeholder">
-          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-          </svg>
-          <p>Calendar view coming soon</p>
-          <p class="hint-text">You'll be able to view your appointments in a calendar format</p>
-        </div>
-      </div>
-    </section>-->
 
     <!-- Analytics Section -->
     <section class="analytics-section">
@@ -260,10 +212,6 @@
               <div class="legend-item">
                 <span class="legend-color pending-color"></span>
                 <span>Pending ({{ bookings.filter(b => b.fields.Status?.stringValue === 'Pending').length }})</span>
-              </div>
-              <div class="legend-item">
-                <span class="legend-color accepted-color"></span>
-                <span>Accepted ({{ bookings.filter(b => b.fields.Status?.stringValue === 'Accepted').length }})</span>
               </div>
               <div class="legend-item">
                 <span class="legend-color completed-color"></span>
@@ -383,39 +331,18 @@
               {{ selectedBooking.fields.Notes?.stringValue }}
             </div>
           </div>
-
-          <div class="detail-group" v-if="selectedBooking.fields.Status?.stringValue === 'Pending'">
-            <h4>Action Required</h4>
-            <p class="action-text">This appointment requires your confirmation. Would you like to accept or reject?</p>
-          </div>
         </div>
 
         <div class="modal-footer" v-if="selectedBooking">
           <!-- Pending Booking Actions -->
           <div v-if="selectedBooking.fields.Status?.stringValue === 'Pending'" class="modal-action-buttons">
-            <button @click="rejectBooking(selectedBooking.fields.BID?.stringValue)" class="btn-secondary" :disabled="isActionProcessing(selectedBooking.fields.BID?.stringValue)">
-              <span v-if="isActionProcessing(selectedBooking.fields.BID?.stringValue)" class="input-loader"></span>
-              Reject Appointment
-            </button>
-            <button @click="acceptBooking(selectedBooking.fields.BID?.stringValue)" class="btn-submit" :disabled="isActionProcessing(selectedBooking.fields.BID?.stringValue)">
-              <span v-if="isActionProcessing(selectedBooking.fields.BID?.stringValue)" class="input-loader"></span>
-              Accept Appointment
-            </button>
-          </div>
-
-          <!-- Accepted Booking Actions -->
-          <div v-else-if="selectedBooking.fields.Status?.stringValue === 'Accepted'" class="modal-action-buttons">
             <button @click="cancelBooking(selectedBooking.fields.BID?.stringValue)" class="btn-secondary" :disabled="isActionProcessing(selectedBooking.fields.BID?.stringValue)">
               <span v-if="isActionProcessing(selectedBooking.fields.BID?.stringValue)" class="input-loader"></span>
               Cancel Appointment
             </button>
-            <button @click="completeBooking(selectedBooking.fields.BID?.stringValue)" class="btn-submit" :disabled="isActionProcessing(selectedBooking.fields.BID?.stringValue)">
-              <span v-if="isActionProcessing(selectedBooking.fields.BID?.stringValue)" class="input-loader"></span>
-              Mark as Completed
-            </button>
           </div>
 
-          <!-- Close button for completed/cancelled bookings -->
+          <!-- Close button for other statuses -->
           <button v-else class="btn-submit" @click="closeModal">
             Close
           </button>
@@ -540,18 +467,23 @@ export default {
       if (this.searchQuery.trim()) {
         const query = this.searchQuery.toLowerCase();
         result = result.filter(booking => {
-          // Get patient name
-          const patient = this.patients.find(
-              p => p.PID === booking.fields.PID?.stringValue
-          );
+          const nurseMatch = this.nurses.find(
+              n => n.NID === booking.fields.NID?.stringValue
+          )?.name.toLowerCase().includes(query);
 
-          const patientMatch = patient?.Name?.toLowerCase().includes(query);
           const bidMatch = booking.fields.BID?.stringValue?.toLowerCase().includes(query);
           const notesMatch = booking.fields.Notes?.stringValue?.toLowerCase().includes(query);
 
-          return patientMatch || bidMatch || notesMatch;
+          return nurseMatch || bidMatch || notesMatch;
         });
       }
+
+      // Sort bookings by date & time (StartTime)
+      result.sort((a, b) => {
+        const timeA = new Date(a.fields.StartTime?.timestampValue || 0);
+        const timeB = new Date(b.fields.StartTime?.timestampValue || 0);
+        return timeA - timeB;
+      });
 
       return result;
     }
@@ -638,62 +570,18 @@ export default {
     },
 
     // Booking action methods
-    acceptBooking(bid) {
-      this.setActionProcessing(bid, true);
-
-      const data = {
-        bid: bid,
-        APIKey: '' // Set your API key if needed
-      };
-
-      axios.post('http://localhost:5008/v1/AcceptBooking', data)
-          .then(() => {
-            this.showActionMessage("Appointment accepted successfully!", true);
-            this.getBookings();
-            this.closeModal();
-          })
-          .catch(error => {
-            console.error("Error accepting booking:", error);
-            this.showActionMessage("Error accepting appointment. Please try again.", false);
-          })
-          .finally(() => {
-            this.setActionProcessing(bid, false);
-          });
-    },
-
-    rejectBooking(bid) {
-      this.setActionProcessing(bid, true);
-
-      const data = {
-        bid: bid,
-        APIKey: '' // Set your API key if needed
-      };
-
-      axios.post('http://localhost:5008/v1/RejectBooking', data)
-          .then(() => {
-            this.showActionMessage("Appointment rejected successfully!", true);
-            this.getBookings();
-            this.closeModal();
-          })
-          .catch(error => {
-            console.error("Error rejecting booking:", error);
-            this.showActionMessage("Error rejecting appointment. Please try again.", false);
-          })
-          .finally(() => {
-            this.setActionProcessing(bid, false);
-          });
-    },
-
     cancelBooking(bid) {
       this.selectedBookingId = bid;
       this.cancellationReason = '';
       this.showCancellationModal = true;
     },
+
     closeCancellationModal() {
       this.showCancellationModal = false;
       this.cancellationReason = '';
       this.selectedBookingId = null;
     },
+
     submitCancellationWithReason() {
       if (!this.cancellationReason.trim()) {
         this.showActionMessage("Oi! Give us a proper reason, ya mug!", false);
@@ -703,11 +591,12 @@ export default {
       this.setActionProcessing(this.selectedBookingId, true);
 
       const data = {
-        bid: this.selectedBookingId,
+        bookingId: this.selectedBookingId,
+        nurseId: this.selectedNurse.NID,  // Add the nurse ID from yer selected nurse
         reason: this.cancellationReason
       };
 
-      axios.post('http://localhost:5008/v1/CancelWithReason', data)
+      axios.post('http://localhost:5011/api/cancel-booking/nurse-cancel', data)
           .then(() => {
             this.showActionMessage("Sorted! Appointment cancelled and reassigned.", true);
             this.getBookings();
@@ -719,29 +608,6 @@ export default {
           })
           .finally(() => {
             this.setActionProcessing(this.selectedBookingId, false);
-          });
-    },
-
-    completeBooking(bid) {
-      this.setActionProcessing(bid, true);
-
-      const data = {
-        bid: bid,
-        APIKey: '' // Set your API key if needed
-      };
-
-      axios.post('http://localhost:5008/v1/CompleteBooking', data)
-          .then(() => {
-            this.showActionMessage("Appointment completed successfully!", true);
-            this.getBookings();
-            this.closeModal();
-          })
-          .catch(error => {
-            console.error("Error completing booking:", error);
-            this.showActionMessage("Error completing appointment. Please try again.", false);
-          })
-          .finally(() => {
-            this.setActionProcessing(bid, false);
           });
     },
 
@@ -873,7 +739,6 @@ export default {
 
       const statusMap = {
         'Pending': 'status-pending',
-        'Accepted': 'status-accepted',
         'Completed': 'status-completed',
         'Cancelled': 'status-cancelled'
       };
@@ -916,8 +781,6 @@ export default {
       switch(status) {
         case 'Pending':
           return `New appointment request from ${patient}`;
-        case 'Accepted':
-          return `Appointment with ${patient} confirmed`;
         case 'Completed':
           return `Appointment with ${patient} completed`;
         case 'Cancelled':
@@ -1207,22 +1070,7 @@ section h2 {
   text-decoration: underline;
 }
 
-.btn-accept {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 6px;
-  background-color: #ecfdf5;
-  color: #065f46;
-  font-size: 14px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  transition: var(--transition);
-  margin-right: 8px;
-}
-
-.btn-reject, .btn-cancel {
+.btn-cancel {
   padding: 6px 12px;
   border: none;
   border-radius: 6px;
@@ -1234,21 +1082,6 @@ section h2 {
   align-items: center;
   cursor: pointer;
   transition: var(--transition);
-}
-
-.btn-complete {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 6px;
-  background-color: #eff6ff;
-  color: #1e40af;
-  font-size: 14px;
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  transition: var(--transition);
-  margin-right: 8px;
 }
 
 .btn-details {
@@ -1265,23 +1098,15 @@ section h2 {
   transition: var(--transition);
 }
 
-.btn-accept:hover {
-  background-color: #d1fae5;
-}
-
-.btn-reject:hover, .btn-cancel:hover {
+.btn-cancel:hover {
   background-color: #fee2e2;
-}
-
-.btn-complete:hover {
-  background-color: #dbeafe;
 }
 
 .btn-details:hover {
   background-color: var(--neutral-200);
 }
 
-.btn-accept:disabled, .btn-reject:disabled, .btn-cancel:disabled, .btn-complete:disabled, .btn-details:disabled {
+.btn-cancel:disabled, .btn-details:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1479,12 +1304,6 @@ tr:hover {
   border-color: #fde68a;
 }
 
-.status-accepted {
-  background-color: #ecfdf5;
-  color: #065f46;
-  border-color: #a7f3d0;
-}
-
 .status-completed {
   background-color: #eff6ff;
   color: #1e40af;
@@ -1590,12 +1409,8 @@ tr:hover {
   background-color: #fde68a;
 }
 
-.accepted-color {
-  background-color: #a7f3d0;
-}
-
 .completed-color {
-  background-color: #bfdbfe;
+  background-color: #2354ee;;
 }
 
 .cancelled-color {

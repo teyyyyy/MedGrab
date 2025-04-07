@@ -79,8 +79,6 @@ services:
       - .env
     ports:
       - "5003:5003"
-    volumes:
-      - ./atomic/nurse/credentials.json:/app/credentials.json
     networks:
       - medgrab_network
 # REPORT
@@ -93,8 +91,6 @@ services:
       - .env
     ports:
       - "5004:5004"
-    volumes:
-      - ./atomic/report/credentials.json:/app/credentials.json
     networks:
       - medgrab_network
 
@@ -140,6 +136,8 @@ services:
       context: .
       dockerfile: composite/bookcomp.Dockerfile
     container_name: medgrab_booking_service
+    env_file:
+      - .env
     ports:
       - "5008:5008"
     environment:
@@ -290,8 +288,6 @@ networks:
 #     container_name: medgrab_nurse_service
 #     env_file:
 #       - .env
-#     volumes:
-#       - ./atomic/nurse/credentials.json:/app/credentials.json
 #     networks:
 #       - medgrab_network
 
@@ -303,8 +299,6 @@ networks:
 #     container_name: medgrab_report_service
 #     env_file:
 #       - .env
-#     volumes:
-#       - ./atomic/report/credentials.json:/app/credentials.json
 #     networks:
 #       - medgrab_network
 

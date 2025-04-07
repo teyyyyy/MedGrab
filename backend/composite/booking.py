@@ -1,8 +1,9 @@
 """
 MedGrab Booking Composite Service
 A microservice for handling booking operations between nurses and patients.
+Now includes payment orchestration.
 """
-from flask import Flask, Blueprint, request, jsonify
+from flask import Flask, Blueprint, request, jsonify, redirect, render_template_string
 from flask_cors import CORS
 import httpx
 import logging
@@ -12,6 +13,8 @@ import random
 from typing import Dict, Any, Tuple, Optional, List
 from dataclasses import dataclass
 from functools import wraps
+from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +31,8 @@ class ServiceConfig:
     NURSE_URL: str
     PATIENT_URL: str
     API_KEY: str
+    COMPLETION_CREDIT_BONUS: int  # Added configurable credit bonus for completion
+    STRIPE_SERVICE_URL: str  # URL for Stripe service
 
 
 @dataclass
@@ -51,14 +56,16 @@ class Config:
             MAIN_URL=os.environ.get('MAIN_URL', 'https://personal-o6lh6n5u.outsystemscloud.com/MedGrabBookingAtomic/rest/v1/'),
             NURSE_URL=os.environ.get('NURSE_URL', 'http://host.docker.internal:5003/'),
             PATIENT_URL=os.environ.get('PATIENT_URL', 'https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/'),
-            API_KEY=os.environ.get('API_KEY', 'adf0fe5c19401034c4466875565bc6c62253eae1dd84d46fba4eeda2bd1a0c5549168bfefa2021f03df33e9eab0bbd8527f6586f79bb36e1be37bfabac288374756ae7b54a548be1f607408a479467bde1fce109f94fa8e151f875451483291f5ead011168c835409bfbda1f2c7781f6a94cdc75d2d33d99ee7486edd9e0f70746f7d7979798ffd473362a3968da6c618693a184a296ce344c7a4c725b5db0bf72025d91b1c0e2186621b9cc7c482f72035b5bb12bfbda41e29ae25546e5f1e087d5f097d6680aef95c12c166f369c8a5911373c787baaaf620c06297c3839dd6c51719eaaff31b99df87512172c5140157acaf4439b7c13a0aecde2c5cb9643')
+            API_KEY=os.environ.get('BOOKING_API_KEY', ''),
+            COMPLETION_CREDIT_BONUS=int(os.environ.get('COMPLETION_CREDIT_BONUS', 2)),  # Default to +2 points
+            STRIPE_SERVICE_URL=os.environ.get('STRIPE_SERVICE_URL', 'http://host.docker.internal:5010/')
         )
 
     @staticmethod
     def get_amqp_config() -> AmqpConfig:
         """Get AMQP configuration from environment variables."""
         return AmqpConfig(
-            HOST=os.environ.get('AMQP_HOST', 'localhost'),
+            HOST=os.environ.get('AMQP_HOST', 'host.docker.internal'),
             PORT=int(os.environ.get('AMQP_PORT', 5672)),
             EXCHANGE_NAME=os.environ.get('EXCHANGE_NAME', 'medgrab_exchange'),
             EXCHANGE_TYPE=os.environ.get('EXCHANGE_TYPE', 'topic'),
@@ -159,6 +166,23 @@ class HttpClient:
             logger.error(f"Request error: {e}")
             raise ApiError(f"Request error: {e}")
 
+    @staticmethod
+    async def put(url: str, json_data: Dict) -> Dict:
+        """Make a PUT request to the specified URL."""
+        try:
+            logger.info(f"PUT request to: {url}")
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                response = await client.put(url, json=json_data, timeout=10.0)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error: {e}")
+            status_code = e.response.status_code
+            raise ApiError(f"HTTP error: {e}", status_code)
+        except httpx.RequestError as e:
+            logger.error(f"Request error: {e}")
+            raise ApiError(f"Request error: {e}")
+
 
 class NotificationService:
     """Service for creating and sending notifications."""
@@ -180,8 +204,6 @@ class NotificationService:
                 <li><strong>Location:</strong> {location}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-
-            <p><strong>Please respond to the request within 24 hours:</strong></p>
 
             <p>Thank you for your service.</p>
             <p>Best Regards,<br>MedGrab Team</p>
@@ -207,71 +229,23 @@ class NotificationService:
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
 
-            <p>Your nurse will confirm this booking shortly. You'll receive another notification once confirmed.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
         """
 
     @staticmethod
-    def create_nurse_accepted_notification(nurse_name: str, patient_name: str,
-                                         start_time: str, end_time: str,
-                                         location: str, notes: str) -> str:
-        """Create HTML notification for an accepted booking to send to a nurse."""
+    def create_nurse_booking_completed_notification(nurse_name: str, patient_name: str,
+                                                  start_time: str, end_time: str,
+                                                  location: str, notes: str, credit_bonus: int) -> str:
+        """Create HTML notification for a completed booking to send to the nurse."""
         return f"""
         <html>
         <body>
-            <p>Hello {nurse_name},</p>
-            <p>You have accepted the booking for patient {patient_name}.</p>
+            <p>Oi {nurse_name}!</p>
+            <p>Your booking has been marked as completed. Good job!</p>
             <hr>
-            <h3>Booking Details:</h3>
-            <ul>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Location:</strong> {location}</li>
-                <li><strong>Notes:</strong> {notes}</li>
-            </ul>
-            <p>Thank you for your service.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-    @staticmethod
-    def create_patient_accepted_notification(patient_name: str, nurse_name: str,
-                                           start_time: str, end_time: str, notes: str) -> str:
-        """Create HTML notification for an accepted booking to send to a patient."""
-        return f"""
-        <html>
-        <body>
-            <p>Hello {patient_name},</p>
-            <p>Good news! Your booking has been accepted by {nurse_name}.</p>
-            <hr>
-            <h3>Booking Details:</h3>
-            <ul>
-                <li><strong>Nurse:</strong> {nurse_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Notes:</strong> {notes}</li>
-            </ul>
-            <p>Please be available at the scheduled time.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-    @staticmethod
-    def create_new_nurse_reassigned_notification(nurse_name: str, patient_name: str,
-                                               start_time: str, end_time: str,
-                                               location: str, notes: str) -> str:
-        """Create HTML notification for a reassigned booking to send to the new nurse."""
-        return f"""
-        <html>
-        <body>
-            <p>Hello {nurse_name},</p>
-            <p>A booking has been reassigned to you.</p>
-            <hr>
-            <h3>Booking Details:</h3>
+            <h3>Completed Booking Details:</h3>
             <ul>
                 <li><strong>Patient:</strong> {patient_name}</li>
                 <li><strong>Start time:</strong> {start_time}</li>
@@ -279,30 +253,31 @@ class NotificationService:
                 <li><strong>Location:</strong> {location}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-            <p><strong>Please respond to the request within 24 hours.</strong></p>
+            <p><strong>Good news!</strong> You've received a +{credit_bonus} credit score bonus for completing this booking.</p>
+            <p>Thanks for your hard work.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
         """
 
     @staticmethod
-    def create_patient_reassigned_notification(patient_name: str, nurse_name: str,
-                                             start_time: str, end_time: str, notes: str) -> str:
-        """Create HTML notification for a reassigned booking to send to the patient."""
+    def create_patient_booking_completed_notification(patient_name: str, nurse_name: str,
+                                                    start_time: str, end_time: str, notes: str) -> str:
+        """Create HTML notification for a completed booking to send to the patient."""
         return f"""
         <html>
         <body>
             <p>Hello {patient_name},</p>
-            <p>Your booking has been reassigned to a new nurse: {nurse_name}.</p>
+            <p>Your booking with {nurse_name} has been marked as completed.</p>
             <hr>
-            <h3>Updated Booking Details:</h3>
+            <h3>Completed Booking Details:</h3>
             <ul>
                 <li><strong>Nurse:</strong> {nurse_name}</li>
                 <li><strong>Start time:</strong> {start_time}</li>
                 <li><strong>End time:</strong> {end_time}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
-            <p>Your new nurse will confirm this booking shortly.</p>
+            <p>We hope your experience was satisfactory. If you have a moment, please consider leaving feedback on our app.</p>
             <p>Best Regards,<br>MedGrab Team</p>
         </body>
         </html>
@@ -314,6 +289,7 @@ class NurseService:
 
     def __init__(self, config: ServiceConfig):
         self.base_url = config.NURSE_URL
+        self.completion_credit_bonus = config.COMPLETION_CREDIT_BONUS
 
     async def get_nurse(self, nurse_id: str) -> Dict:
         """Get details for a specific nurse."""
@@ -324,6 +300,16 @@ class NurseService:
         """Get all available nurses."""
         url = f"{self.base_url}api/nurses/"  # Added trailing slash
         return await HttpClient.get(url)
+
+    async def update_nurse_credit_score(self, nurse_id: str, credit_change: int, reason: str) -> Dict:
+        """Update nurse credit score."""
+        url = f"{self.base_url}api/nurses/{nurse_id}/credit"
+        data = {
+            "creditChange": credit_change,
+            "reason": reason
+        }
+        logger.info(f"Updating nurse credit score: {url}")
+        return await HttpClient.put(url, data)
 
 
 class PatientService:
@@ -371,6 +357,28 @@ class BookingService:
 
         return response
 
+    async def get_all_pending_bookings(self) -> List[Dict]:
+        """Get all pending bookings by fetching all bookings and filtering for pending status."""
+        url = f"{self.base_url}GetAllBookings"
+        logger.info(f"Fetching all bookings from: {url}")
+        response = await HttpClient.get(url)
+
+        if response.get("StatusCode") != 200:
+            raise ApiError(response.get("Message", "Unknown error"), response.get("StatusCode", 500))
+
+        # Get all bookings
+        all_bookings = response.get("Bookings", [])
+
+        # Filter for pending bookings
+        pending_bookings = [
+            booking for booking in all_bookings
+            if booking.get("fields", {}).get("Status", {}).get("stringValue") == "Pending"
+        ]
+
+        logger.info(f"Filtered {len(pending_bookings)} pending bookings from {len(all_bookings)} total bookings")
+
+        return pending_bookings
+
     async def update_booking_status(self, booking_id: str, status: str) -> Dict:
         """Update the status of a booking."""
         url = f"{self.base_url}UpdateBookingStatus/{booking_id}/{status}"
@@ -391,15 +399,35 @@ class BookingService:
 
         return response
 
-    async def cancel_with_reason(self, booking_id: str, reason: str) -> Dict:
-        """Cancel a booking with a reason."""
-        url = f"{self.base_url}CancelWithReason/{booking_id}"
-        response = await HttpClient.post(url, {"APIKey": self.api_key, "Reason": reason})
 
-        if response.get("StatusCode") != 200:
-            raise ApiError(response.get("Message", "Unknown error"), response.get("StatusCode", 500))
+class StripeService:
+    """Service for interacting with the Stripe payment service."""
 
-        return response
+    def __init__(self, config: ServiceConfig):
+        self.base_url = config.STRIPE_SERVICE_URL
+
+    async def create_payment_session(self, amount: float, booking_id: str, patient_id: str, nurse_id: str,
+                                    booking_data: Dict, success_callback_url: str) -> Dict:
+        """Create a Stripe payment session and return the session details."""
+        payment_data = {
+            "amount": amount,
+            "booking_id": booking_id,
+            "patient_id": patient_id,
+            "nurse_id": nurse_id,
+            "success_callback_url": success_callback_url,
+            "booking_data": booking_data  # Pass the entire booking data for use after payment
+        }
+
+        logger.info(f"Creating payment session with data: {payment_data}")
+        return await HttpClient.post(f"{self.base_url}create-payment-session", payment_data)
+
+    async def check_payment_status(self, session_id: str) -> Dict:
+        """Check the status of a payment session."""
+        return await HttpClient.get(f"{self.base_url}payment-status/{session_id}")
+
+    def get_payment_page_url(self, session_id: str) -> str:
+        """Get the URL for the Stripe payment page."""
+        return f"{self.base_url}payment-page/{session_id}"
 
 
 class BookingManager:
@@ -409,9 +437,96 @@ class BookingManager:
         self.nurse_service = NurseService(service_config)
         self.patient_service = PatientService(service_config)
         self.booking_service = BookingService(service_config)
+        self.stripe_service = StripeService(service_config)
+        self.completion_credit_bonus = service_config.COMPLETION_CREDIT_BONUS
+        self.api_key = service_config.API_KEY
+        self.service_config = service_config
+
+
+    async def start_booking_process(self, booking_data: Dict) -> Dict:
+        """Start the booking process by creating a payment session and returning the payment page URL."""
+        # Extract data
+        nurse_id = booking_data.get('NID')
+        patient_id = booking_data.get('PID')
+        amount = booking_data.get('PaymentAmt')
+
+        # Generate a booking ID if not provided
+        if not booking_data.get('BID'):
+            booking_data['BID'] = f"BID-{random.randint(100000, 999999)}"
+
+        booking_id = booking_data.get('BID')
+
+        # Validate required fields
+        required_fields = ['NID', 'PID', 'StartTime', 'EndTime', 'PaymentAmt', 'Notes']
+        for field in required_fields:
+            if not booking_data.get(field):
+                raise ApiError(f'Missing required field: {field}', 400)
+
+        # Success callback URL - where to redirect after successful payment
+        callback_url = f"{request.host_url}v1/payment-callback"
+
+        # Create payment session with Stripe
+        try:
+            payment_session = await self.stripe_service.create_payment_session(
+                amount=amount,
+                booking_id=booking_id,
+                patient_id=patient_id,
+                nurse_id=nurse_id,
+                booking_data=booking_data,
+                success_callback_url=callback_url
+            )
+
+            return {
+                'payment_session_id': payment_session.get('session_id'),
+                'payment_url': payment_session.get('payment_url'),
+                'booking_id': booking_id
+            }
+        except Exception as e:
+            logger.error(f"Error creating payment session: {str(e)}")
+            raise ApiError(f"Failed to create payment session: {str(e)}")
+
+    async def process_successful_payment(self, session_id: str) -> Dict:
+        """Process a successful payment by creating the booking."""
+        try:
+            # Check payment status
+            payment_status = await self.stripe_service.check_payment_status(session_id)
+
+            if not payment_status.get('success') or payment_status.get('payment_status') != 'paid':
+                raise ApiError('Payment verification failed', 400)
+
+            # Get the booking data from the payment session
+            metadata = payment_status.get('metadata', {})
+            booking_data = metadata.get('booking_data', {})
+            if not booking_data:
+                raise ApiError('Booking data not found in payment session', 400)
+
+            # PROPER FUCKIN' DEBUG THIS SHIT
+            logger.info(f"API KEY FROM CONFIG: {self.service_config.API_KEY}")
+
+            # FORCE THE FUCKIN' KEY IN - BELT AND BRACES, YA GET ME?
+            booking_data['APIKey'] = self.service_config.API_KEY
+
+            logger.info(f"BOOKING DATA WITH API KEY: {booking_data}")
+
+            # Create the booking
+            booking_result = await self.create_new_booking(booking_data)
+
+            return {
+                'message': 'Payment successful and booking created',
+                'booking_id': booking_result.get('booking_id'),
+                'payment_session_id': session_id
+            }
+        except Exception as e:
+            logger.error(f"Error processing successful payment: {str(e)}")
+            raise ApiError(f"Failed to process payment: {str(e)}")
 
     async def create_new_booking(self, booking_data: Dict) -> Dict:
         """Create a new booking and handle all related operations."""
+        # FORCE THE FUCKIN' KEY AGAIN - DOUBLE CHECK THIS SHIT
+        booking_data['APIKey'] = self.service_config.API_KEY
+
+        logger.info(f"FINAL BOOKING DATA BEFORE REQUEST: {booking_data}")
+
         # Extract data
         nurse_id = booking_data.get('NID')
         patient_id = booking_data.get('PID')
@@ -419,10 +534,14 @@ class BookingManager:
         end_time = booking_data.get('EndTime')
         notes = booking_data.get('Notes', '')
 
+        # Rest of your code...
+
         # Get nurse and patient details
         nurse = await self.nurse_service.get_nurse(nurse_id)
         patient_data = await self.patient_service.get_patient(patient_id)
         patient = patient_data.get('patient')
+
+        print(booking_data)
 
         # Create the booking
         booking_result = await self.booking_service.create_booking(booking_data)
@@ -462,44 +581,78 @@ class BookingManager:
             'booking_id': booking_result.get('BookingId', '')
         }
 
-    async def accept_booking(self, booking_id: str) -> Dict:
-        """Accept a booking and notify relevant parties."""
-        # Get booking details
-        booking_result = await self.booking_service.get_booking(booking_id)
-        booking_data = booking_result.get('Booking', {})
+    async def complete_booking(self, booking_id: str) -> Dict:
+        """Manually complete a booking, increase nurse credit score, and send notifications."""
+        try:
+            # Get booking details
+            booking_result = await self.booking_service.get_booking(booking_id)
+            booking_data = booking_result.get('Booking', {})
 
-        # Extract nurse and patient IDs
-        fields = booking_data.get('fields', {})
-        nurse_id = fields.get('NID', {}).get('stringValue')
-        patient_id = fields.get('PID', {}).get('stringValue')
+            # Extract fields
+            fields = booking_data.get('fields', {})
+            nurse_id = fields.get('NID', {}).get('stringValue')
+            patient_id = fields.get('PID', {}).get('stringValue')
+            start_time = fields.get('StartTime', {}).get('timestampValue', '')
+            end_time = fields.get('EndTime', {}).get('timestampValue', '')
+            notes = fields.get('Notes', {}).get('stringValue', '')
 
-        if not nurse_id or not patient_id:
-            raise ApiError('Missing nurse or patient ID in booking data', 400)
+            if not nurse_id or not patient_id:
+                raise ApiError('Missing nurse or patient ID in booking data', 400)
 
-        # Get nurse and patient details
-        nurse = await self.nurse_service.get_nurse(nurse_id)
-        patient_data = await self.patient_service.get_patient(patient_id)
-        patient = patient_data.get('patient', {})
+            # Update booking status to completed
+            await self.booking_service.update_booking_status(booking_id, "Completed")
 
-        # Update booking status
-        await self.booking_service.update_booking_status(booking_id, 'Accepted')
+            # Increase nurse credit score
+            credit_update_result = await self.nurse_service.update_nurse_credit_score(
+                nurse_id,
+                self.completion_credit_bonus,
+                f"Booking completion bonus: Booking ID {booking_id}"
+            )
 
+            logger.info(f"Updated nurse {nurse_id} credit score: +{self.completion_credit_bonus} points")
+
+            # Get nurse and patient details
+            nurse = await self.nurse_service.get_nurse(nurse_id)
+            patient_data = await self.patient_service.get_patient(patient_id)
+            patient = patient_data.get('patient', {})
+
+            # Send completion notifications
+            await self._send_completion_notifications(
+                nurse.get('name', 'Nurse'),
+                nurse.get('email', ''),
+                patient.get('PatientName', 'Patient'),
+                patient.get('Email', ''),
+                patient.get('Location', 'Unknown'),
+                start_time,
+                end_time,
+                notes
+            )
+
+            return {
+                'message': 'Booking completed successfully',
+                'booking_id': booking_id,
+                'credit_bonus': self.completion_credit_bonus,
+                'new_credit_score': credit_update_result.get('creditScore')
+            }
+
+        except ApiError as e:
+            logger.error(f"API error in complete_booking: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in complete_booking: {str(e)}")
+            raise ApiError(f"Failed to complete booking: {str(e)}")
+
+    async def _send_completion_notifications(self, nurse_name: str, nurse_email: str,
+                                           patient_name: str, patient_email: str,
+                                           location: str, start_time: str, end_time: str,
+                                           notes: str):
+        """Send completion notifications to nurse and patient."""
         # Create notifications
-        start_time = fields.get('StartTime', {}).get('stringValue', '')
-        end_time = fields.get('EndTime', {}).get('stringValue', '')
-        location = patient.get('Location', 'Unknown')
-        notes = fields.get('Notes', {}).get('stringValue', '')
-
-        nurse_name = nurse.get('name', 'Nurse')
-        nurse_email = nurse.get('email', '')
-        patient_name = patient.get('PatientName', 'Patient')
-        patient_email = patient.get('Email', '')
-
-        nurse_notification = NotificationService.create_nurse_accepted_notification(
-            nurse_name, patient_name, start_time, end_time, location, notes
+        nurse_notification = NotificationService.create_nurse_booking_completed_notification(
+            nurse_name, patient_name, start_time, end_time, location, notes, self.completion_credit_bonus
         )
 
-        patient_notification = NotificationService.create_patient_accepted_notification(
+        patient_notification = NotificationService.create_patient_booking_completed_notification(
             patient_name, nurse_name, start_time, end_time, notes
         )
 
@@ -507,229 +660,100 @@ class BookingManager:
         if nurse_email:
             await send_notification_amqp(
                 nurse_email,
-                "Booking Accepted",
+                "Booking Completed",
                 nurse_notification
             )
 
         if patient_email:
             await send_notification_amqp(
                 patient_email,
-                "Your booking has been accepted",
+                "Your booking has been completed",
                 patient_notification
             )
 
-        return {'message': 'Booking accepted'}
+    async def check_completed_bookings(self):
+        """Check for pending bookings that have passed their end time and mark them as completed."""
+        try:
+            logger.info("Running scheduled task to check for completed bookings")
 
-    async def reject_and_reassign_booking(self, booking_id: str) -> Dict:
-        """Reject a booking and reassign it to another nurse."""
-        # Get booking details
-        booking_result = await self.booking_service.get_booking(booking_id)
-        booking_data = booking_result.get('Booking', {})
+            # Get all pending bookings
+            pending_bookings = await self.booking_service.get_all_pending_bookings()
 
-        # Extract nurse and patient IDs
-        fields = booking_data.get('fields', {})
-        current_nurse_id = fields.get('NID', {}).get('stringValue')
-        patient_id = fields.get('PID', {}).get('stringValue')
+            # Get current time
+            current_time = datetime.now()
+            completed_count = 0
 
-        if not current_nurse_id or not patient_id:
-            raise ApiError('Missing nurse or patient ID in booking data', 400)
+            for booking in pending_bookings:
+                # Extract booking data
+                booking_id = booking.get('id')
+                fields = booking.get('fields', {})
 
-        # Get all nurses and find a new one
-        all_nurses = await self.nurse_service.get_all_nurses()
-        available_nurses = [nurse for nurse in all_nurses if nurse.get('NID') != current_nurse_id]
+                # Extract necessary fields
+                nurse_id = fields.get('NID', {}).get('stringValue')
+                patient_id = fields.get('PID', {}).get('stringValue')
+                start_time = fields.get('StartTime', {}).get('timestampValue', '')
+                end_time_str = fields.get('EndTime', {}).get('timestampValue', '')
+                notes = fields.get('Notes', {}).get('stringValue', '')
 
-        if not available_nurses:
-            raise ApiError('No other nurses available for reassignment', 400)
+                if not end_time_str:
+                    logger.warning(f"Booking {booking_id} missing end time")
+                    continue
 
-        # Choose a random nurse
-        new_nurse = random.choice(available_nurses)
-        new_nurse_id = new_nurse.get('NID')
+                # Parse end time (assuming ISO format)
+                try:
+                    end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
 
-        # Update booking with new nurse
-        await self.booking_service.update_booking_nurse(booking_id, new_nurse_id)
+                    # Check if end time has passed
+                    if current_time > end_time:
+                        logger.info(f"Marking booking {booking_id} as completed (end time: {end_time_str})")
 
-        # Get patient details
-        patient_data = await self.patient_service.get_patient(patient_id)
-        patient = patient_data.get('patient', {})
+                        # Update booking status to completed
+                        await self.booking_service.update_booking_status(booking_id, "Completed")
 
-        # Create notifications
-        start_time = fields.get('StartTime', {}).get('stringValue', '')
-        end_time = fields.get('EndTime', {}).get('stringValue', '')
-        location = patient.get('Location', 'Unknown')
-        notes = fields.get('Notes', {}).get('stringValue', '')
+                        # Increase nurse credit score
+                        try:
+                            await self.nurse_service.update_nurse_credit_score(
+                                nurse_id,
+                                self.completion_credit_bonus,
+                                f"Automatic booking completion bonus: Booking ID {booking_id}"
+                            )
+                            logger.info(f"Updated nurse {nurse_id} credit score: +{self.completion_credit_bonus} points")
+                        except Exception as credit_error:
+                            logger.error(f"Error updating credit score for booking {booking_id}: {credit_error}")
+                            # Continue processing even if credit update fails
 
-        new_nurse_name = new_nurse.get('name', 'Nurse')
-        new_nurse_email = new_nurse.get('email', '')
-        patient_name = patient.get('PatientName', 'Patient')
-        patient_email = patient.get('Email', '')
+                        # Get nurse and patient details for notifications
+                        try:
+                            nurse = await self.nurse_service.get_nurse(nurse_id)
+                            patient_data = await self.patient_service.get_patient(patient_id)
+                            patient = patient_data.get('patient', {})
 
-        new_nurse_notification = NotificationService.create_new_nurse_reassigned_notification(
-            new_nurse_name, patient_name, start_time, end_time, location, notes
-        )
+                            # Send completion notifications
+                            await self._send_completion_notifications(
+                                nurse.get('name', 'Nurse'),
+                                nurse.get('email', ''),
+                                patient.get('PatientName', 'Patient'),
+                                patient.get('Email', ''),
+                                patient.get('Location', 'Unknown'),
+                                start_time,
+                                end_time_str,
+                                notes
+                            )
+                        except Exception as notify_error:
+                            logger.error(f"Error sending completion notifications for booking {booking_id}: {notify_error}")
+                            # Continue processing other bookings even if notification fails
 
-        patient_notification = NotificationService.create_patient_reassigned_notification(
-            patient_name, new_nurse_name, start_time, end_time, notes
-        )
+                        completed_count += 1
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error parsing end time for booking {booking_id}: {e}")
+                    continue
 
-        # Send notifications
-        if new_nurse_email:
-            await send_notification_amqp(
-                new_nurse_email,
-                "New booking assigned to you",
-                new_nurse_notification
-            )
+            logger.info(f"Completed {completed_count} bookings")
+            return completed_count
 
-        if patient_email:
-            await send_notification_amqp(
-                patient_email,
-                "Your booking has been reassigned",
-                patient_notification
-            )
-
-        # Update booking status to "Pending" for the new nurse
-        await self.booking_service.update_booking_status(booking_id, 'Pending')
-
-        return {
-            'message': 'Booking rejected and reassigned',
-            'new_nurse_id': new_nurse_id
-        }
-
-    async def cancel_with_reason_and_reassign(self, booking_id: str, reason: str) -> Dict:
-        """Cancel a booking with reason and create a new booking with another nurse."""
-        # Get booking details
-        booking_result = await self.booking_service.get_booking(booking_id)
-        booking_data = booking_result.get('Booking', {})
-
-        # Extract fields
-        fields = booking_data.get('fields', {})
-        current_nurse_id = fields.get('NID', {}).get('stringValue')
-        patient_id = fields.get('PID', {}).get('stringValue')
-        start_time = fields.get('StartTime', {}).get('timestampValue', '')
-        end_time = fields.get('EndTime', {}).get('timestampValue', '')
-        payment_amt = fields.get('PaymentAmt', {}).get('doubleValue', 0)
-        notes = fields.get('Notes', {}).get('stringValue', '')
-
-        if not current_nurse_id or not patient_id:
-            raise ApiError('Missing nurse or patient ID in booking data', 400)
-
-        # Cancel the current booking with reason
-        await self.booking_service.cancel_with_reason(booking_id, reason)
-
-        # Get all nurses and find a new one
-        all_nurses = await self.nurse_service.get_all_nurses()
-        available_nurses = [nurse for nurse in all_nurses if nurse.get('NID') != current_nurse_id]
-
-        if not available_nurses:
-            raise ApiError('No other nurses available for reassignment', 400)
-
-        # Choose a random nurse
-        new_nurse = random.choice(available_nurses)
-        new_nurse_id = new_nurse.get('NID')
-
-        # Create a new booking with the new nurse
-        new_booking_data = {
-            'NID': new_nurse_id,
-            'PID': patient_id,
-            'StartTime': start_time,
-            'EndTime': end_time,
-            'PaymentAmt': payment_amt,
-            'Notes': notes
-        }
-
-        new_booking_result = await self.booking_service.create_booking(new_booking_data)
-        new_booking_id = new_booking_result.get('BookingId', '')
-
-        # Get patient details
-        patient_data = await self.patient_service.get_patient(patient_id)
-        patient = patient_data.get('patient', {})
-
-        # Get current nurse details
-        current_nurse = await self.nurse_service.get_nurse(current_nurse_id)
-
-        # Create notifications
-        new_nurse_name = new_nurse.get('name', 'Nurse')
-        new_nurse_email = new_nurse.get('email', '')
-        patient_name = patient.get('PatientName', 'Patient')
-        patient_email = patient.get('Email', '')
-        current_nurse_name = current_nurse.get('name', 'Nurse')
-        current_nurse_email = current_nurse.get('email', '')
-        location = patient.get('Location', 'Unknown')
-
-        # Notification to the current nurse about cancellation
-        current_nurse_notification = f"""
-        <html>
-        <body>
-            <p>Hello {current_nurse_name},</p>
-            <p>Your booking with patient {patient_name} has been cancelled with the following reason:</p>
-            <p><em>"{reason}"</em></p>
-            <hr>
-            <h3>Cancelled Booking Details:</h3>
-            <ul>
-                <li><strong>Patient:</strong> {patient_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Location:</strong> {location}</li>
-            </ul>
-            <p>This cancellation has been recorded in your profile.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-        # Notification to the new nurse
-        new_nurse_notification = NotificationService.create_new_nurse_reassigned_notification(
-            new_nurse_name, patient_name, start_time, end_time, location, notes
-        )
-
-        # Notification to the patient
-        patient_notification = f"""
-        <html>
-        <body>
-            <p>Hello {patient_name},</p>
-            <p>Your booking with {current_nurse_name} has been cancelled with the following reason:</p>
-            <p><em>"{reason}"</em></p>
-            <p>However, we have automatically reassigned you to a new nurse: {new_nurse_name}.</p>
-            <hr>
-            <h3>Updated Booking Details:</h3>
-            <ul>
-                <li><strong>New Nurse:</strong> {new_nurse_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
-                <li><strong>Notes:</strong> {notes}</li>
-            </ul>
-            <p>Your new nurse will confirm this booking shortly.</p>
-            <p>Best Regards,<br>MedGrab Team</p>
-        </body>
-        </html>
-        """
-
-        # Send notifications
-        if current_nurse_email:
-            await send_notification_amqp(
-                current_nurse_email,
-                "Booking Cancelled",
-                current_nurse_notification
-            )
-
-        if new_nurse_email:
-            await send_notification_amqp(
-                new_nurse_email,
-                "New booking assigned to you",
-                new_nurse_notification
-            )
-
-        if patient_email:
-            await send_notification_amqp(
-                patient_email,
-                "Your booking has been reassigned",
-                patient_notification
-            )
-
-        return {
-            'message': 'Booking cancelled with reason and reassigned',
-            'new_booking_id': new_booking_id,
-            'new_nurse_id': new_nurse_id
-        }
+        except Exception as e:
+            logger.error(f"Error in check_completed_bookings: {str(e)}")
+            return 0
 
 
 # Create Flask app and blueprint
@@ -738,9 +762,73 @@ CORS(app)  # Enable Cross-Origin Resource Sharing for all routes
 booking_bp = Blueprint('booking_composite', __name__, url_prefix='/v1')
 
 
-# Initialize services
+# Initialize services and scheduler
 service_config = Config.get_service_config()
 booking_manager = BookingManager(service_config)
+scheduler = BackgroundScheduler()
+
+
+# HTML templates for payment success/failure pages
+PAYMENT_SUCCESS_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Successful</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px; background-color: #f0f9ff; }
+        h1 { color: #0f766e; }
+        .message { margin: 20px 0; color: #374151; }
+        .spinner { margin: 20px auto; width: 40px; height: 40px; border: 4px solid #ddd; border-top: 4px solid #0f766e; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <h1>Payment Successful!</h1>
+    <p class="message">Your booking has been created successfully.</p>
+    <p class="message">Booking ID: {{ booking_id }}</p>
+    <div class="spinner"></div>
+    <script>
+        // Close this window after 3 seconds
+        setTimeout(function() {
+            window.opener.postMessage({ 
+                type: 'BOOKING_COMPLETED', 
+                success: true, 
+                bookingId: '{{ booking_id }}' 
+            }, '*');
+            window.close();
+        }, 3000);
+    </script>
+</body>
+</html>
+"""
+
+PAYMENT_FAILURE_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Failed</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px; background-color: #fff1f2; }
+        h1 { color: #be123c; }
+        .message { margin: 20px 0; color: #374151; }
+        .button { display: inline-block; background: #3b82f6; color: white; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Payment Failed</h1>
+    <p class="message">{{ error_message }}</p>
+    <p><a href="javascript:window.close();" class="button">Close Window</a></p>
+    <script>
+        // Notify the opener window
+        window.opener.postMessage({ 
+            type: 'BOOKING_FAILED', 
+            success: false, 
+            error: '{{ error_message }}'
+        }, '*');
+    </script>
+</body>
+</html>
+"""
 
 
 @booking_bp.route('/MakeBooking', methods=['POST'])
@@ -748,6 +836,7 @@ booking_manager = BookingManager(service_config)
 async def make_booking():
     """Endpoint to create a new booking and send notification to nurse."""
     try:
+        # This is now ONLY for creating pre-paid bookings
         data = request.json
         logger.info(f"Received booking request: {data}")
 
@@ -784,30 +873,84 @@ async def make_booking():
         ))
 
 
-@booking_bp.route('/AcceptBooking', methods=['POST'])
+@booking_bp.route('/InitiateBookingWithPayment', methods=['POST'])
 @async_route
-async def accept_booking():
-    """Endpoint to accept a booking."""
+async def initiate_booking_with_payment():
     try:
         data = request.json
-        logger.info(f"Received accept booking request: {data}")
+        logger.info(f"Received booking initiation request: {data}")
 
-        booking_id = data.get('bid')
-        if not booking_id:
-            return jsonify(api_response(
-                success=False,
-                error='Missing booking ID (bid)',
-                status_code=400
-            ))
+        # Start the booking process
+        result = await booking_manager.start_booking_process(data)
 
-        # Process booking acceptance
-        result = await booking_manager.accept_booking(booking_id)
+        # Debug the actual response
+        response_data = {
+            'success': True,
+            'message': "Payment session created successfully",
+            'data': {
+                'payment_url': result.get('payment_url'),
+                'payment_session_id': result.get('payment_session_id'),
+                'booking_id': result.get('booking_id')
+            }
+        }
+        logger.info(f"Sending response: {response_data}")
+
+        return jsonify(response_data)  # Temporarily bypass api_response
+    except ApiError as e:
+        logger.error(f"API Error: {e.message}, {e.status_code}")
+        return jsonify({
+            'success': False,
+            'error': e.message
+        })
+    except Exception as e:
+        logger.error(f"Error in initiate_booking_with_payment: {str(e)}")
+        logger.exception(e)  # Log the full stack trace
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error: ' + str(e)
+        })
+
+
+@booking_bp.route('/payment-callback', methods=['GET'])
+@async_route
+async def payment_callback():
+    """Handle payment callback from Stripe."""
+    session_id = request.args.get('session_id')
+
+    if not session_id:
+        return render_template_string(
+            PAYMENT_FAILURE_TEMPLATE,
+            error_message="Missing session ID"
+        )
+
+    try:
+        # Process the successful payment
+        result = await booking_manager.process_successful_payment(session_id)
+
+        # Render success page with booking ID
+        return render_template_string(
+            PAYMENT_SUCCESS_TEMPLATE,
+            booking_id=result.get('booking_id')
+        )
+    except Exception as e:
+        logger.error(f"Error processing payment callback: {str(e)}")
+        return render_template_string(
+            PAYMENT_FAILURE_TEMPLATE,
+            error_message=str(e)
+        )
+
+
+@booking_bp.route('/CheckPaymentStatus/<session_id>', methods=['GET'])
+@async_route
+async def check_payment_status(session_id):
+    """Endpoint to check a payment status."""
+    try:
+        payment_status = await booking_manager.stripe_service.check_payment_status(session_id)
 
         return jsonify(api_response(
             success=True,
-            **result
+            data={'payment_status': payment_status}
         ))
-
     except ApiError as e:
         return jsonify(api_response(
             success=False,
@@ -815,7 +958,7 @@ async def accept_booking():
             status_code=e.status_code
         ))
     except Exception as e:
-        logger.error(f"Error in accept_booking: {str(e)}")
+        logger.error(f"Error checking payment status: {str(e)}")
         return jsonify(api_response(
             success=False,
             error='Internal server error',
@@ -823,30 +966,45 @@ async def accept_booking():
         ))
 
 
-@booking_bp.route('/RejectBooking', methods=['POST'])
+@booking_bp.route('/ManualCheckCompletedBookings', methods=['POST'])
 @async_route
-async def reject_booking():
-    """Endpoint to reject a booking and reassign it to another nurse."""
+async def manual_check_completed_bookings():
+    """Endpoint to manually trigger the check for completed bookings."""
     try:
-        data = request.json
-        logger.info(f"Received reject booking request: {data}")
-
-        booking_id = data.get('bid')
-        if not booking_id:
-            return jsonify(api_response(
-                success=False,
-                error='Missing booking ID (bid)',
-                status_code=400
-            ))
-
-        # Process booking rejection and reassignment
-        result = await booking_manager.reject_and_reassign_booking(booking_id)
+        completed_count = await booking_manager.check_completed_bookings()
 
         return jsonify(api_response(
             success=True,
-            **result
+            message=f'Successfully checked and updated {completed_count} completed bookings'
+        ))
+    except Exception as e:
+        logger.error(f"Error in manual_check_completed_bookings: {str(e)}")
+        return jsonify(api_response(
+            success=False,
+            error='Internal server error',
+            status_code=500
         ))
 
+
+@booking_bp.route('/CompleteBooking/<booking_id>', methods=['POST'])
+@async_route
+async def complete_booking(booking_id: str):
+    """Endpoint to manually complete a specific booking."""
+    try:
+        if not booking_id:
+            return jsonify(api_response(
+                success=False,
+                error='Missing booking ID',
+                status_code=400
+            ))
+
+        result = await booking_manager.complete_booking(booking_id)
+
+        return jsonify(api_response(
+            success=True,
+            message=f'Successfully completed booking {booking_id}',
+            **result
+        ))
     except ApiError as e:
         return jsonify(api_response(
             success=False,
@@ -854,7 +1012,7 @@ async def reject_booking():
             status_code=e.status_code
         ))
     except Exception as e:
-        logger.error(f"Error in reject_booking: {str(e)}")
+        logger.error(f"Error in complete_booking endpoint: {str(e)}")
         return jsonify(api_response(
             success=False,
             error='Internal server error',
@@ -862,52 +1020,10 @@ async def reject_booking():
         ))
 
 
-@booking_bp.route('/CancelWithReason', methods=['POST'])
-@async_route
-async def cancel_with_reason():
-    """Endpoint to cancel a booking with reason and reassign it to another nurse."""
-    try:
-        data = request.json
-        logger.info(f"Received cancel with reason request: {data}")
+# Function to run the scheduler task
+def run_check_completed_bookings():
+    asyncio.run(booking_manager.check_completed_bookings())
 
-        booking_id = data.get('bid')
-        reason = data.get('reason')
-
-        if not booking_id:
-            return jsonify(api_response(
-                success=False,
-                error='Missing booking ID (bid)',
-                status_code=400
-            ))
-
-        if not reason:
-            return jsonify(api_response(
-                success=False,
-                error='Missing cancellation reason',
-                status_code=400
-            ))
-
-        # Process booking cancellation with reason and reassignment
-        result = await booking_manager.cancel_with_reason_and_reassign(booking_id, reason)
-
-        return jsonify(api_response(
-            success=True,
-            **result
-        ))
-
-    except ApiError as e:
-        return jsonify(api_response(
-            success=False,
-            error=e.message,
-            status_code=e.status_code
-        ))
-    except Exception as e:
-        logger.error(f"Error in cancel_with_reason: {str(e)}")
-        return jsonify(api_response(
-            success=False,
-            error='Internal server error',
-            status_code=500
-        ))
 
 # Register blueprint
 app.register_blueprint(booking_bp)
@@ -918,9 +1034,18 @@ if __name__ == '__main__':
     if not api_key:
         logger.warning("API_KEY environment variable not set. Service may not function correctly.")
 
-    # Run the Flask app
-    app.run(
-        debug=os.environ.get('DEBUG', 'True').lower() == 'true',
-        host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5008))
-    )
+    # Set up the scheduler to run every 5 minutes
+    scheduler.add_job(run_check_completed_bookings, 'interval', minutes=5)
+    scheduler.start()
+    logger.info("Started scheduler to check for completed bookings every 5 minutes")
+
+    try:
+        # Run the Flask app
+        app.run(
+            debug=os.environ.get('DEBUG', 'True').lower() == 'true',
+            host='0.0.0.0',
+            port=int(os.environ.get('PORT', 5008))
+        )
+    except (KeyboardInterrupt, SystemExit):
+        # Shut down the scheduler when exiting
+        scheduler.shutdown()
