@@ -1,8 +1,9 @@
 """
 MedGrab Booking Composite Service
 A microservice for handling booking operations between nurses and patients.
+Now includes payment orchestration.
 """
-from flask import Flask, Blueprint, request, jsonify
+from flask import Flask, Blueprint, request, jsonify, redirect, render_template_string
 from flask_cors import CORS
 import httpx
 import logging
@@ -31,6 +32,7 @@ class ServiceConfig:
     PATIENT_URL: str
     API_KEY: str
     COMPLETION_CREDIT_BONUS: int  # Added configurable credit bonus for completion
+    STRIPE_SERVICE_URL: str  # URL for Stripe service
 
 
 @dataclass
@@ -55,7 +57,8 @@ class Config:
             NURSE_URL=os.environ.get('NURSE_URL', 'http://host.docker.internal:5003/'),
             PATIENT_URL=os.environ.get('PATIENT_URL', 'https://personal-eassd2ao.outsystemscloud.com/PatientAPI/rest/v2/'),
             API_KEY=os.environ.get('BOOKING_API_KEY', ''),
-            COMPLETION_CREDIT_BONUS=int(os.environ.get('COMPLETION_CREDIT_BONUS', 2))  # Default to +2 points
+            COMPLETION_CREDIT_BONUS=int(os.environ.get('COMPLETION_CREDIT_BONUS', 2)),  # Default to +2 points
+            STRIPE_SERVICE_URL=os.environ.get('STRIPE_SERVICE_URL', 'http://host.docker.internal:5010/')
         )
 
     @staticmethod
@@ -355,14 +358,26 @@ class BookingService:
         return response
 
     async def get_all_pending_bookings(self) -> List[Dict]:
-        """Get all pending bookings."""
-        url = f"{self.base_url}GetBookingsByStatus/Pending"
+        """Get all pending bookings by fetching all bookings and filtering for pending status."""
+        url = f"{self.base_url}GetAllBookings"
+        logger.info(f"Fetching all bookings from: {url}")
         response = await HttpClient.get(url)
 
         if response.get("StatusCode") != 200:
             raise ApiError(response.get("Message", "Unknown error"), response.get("StatusCode", 500))
 
-        return response.get("Bookings", [])
+        # Get all bookings
+        all_bookings = response.get("Bookings", [])
+
+        # Filter for pending bookings
+        pending_bookings = [
+            booking for booking in all_bookings
+            if booking.get("fields", {}).get("Status", {}).get("stringValue") == "Pending"
+        ]
+
+        logger.info(f"Filtered {len(pending_bookings)} pending bookings from {len(all_bookings)} total bookings")
+
+        return pending_bookings
 
     async def update_booking_status(self, booking_id: str, status: str) -> Dict:
         """Update the status of a booking."""
@@ -385,6 +400,36 @@ class BookingService:
         return response
 
 
+class StripeService:
+    """Service for interacting with the Stripe payment service."""
+
+    def __init__(self, config: ServiceConfig):
+        self.base_url = config.STRIPE_SERVICE_URL
+
+    async def create_payment_session(self, amount: float, booking_id: str, patient_id: str, nurse_id: str,
+                                    booking_data: Dict, success_callback_url: str) -> Dict:
+        """Create a Stripe payment session and return the session details."""
+        payment_data = {
+            "amount": amount,
+            "booking_id": booking_id,
+            "patient_id": patient_id,
+            "nurse_id": nurse_id,
+            "success_callback_url": success_callback_url,
+            "booking_data": booking_data  # Pass the entire booking data for use after payment
+        }
+
+        logger.info(f"Creating payment session with data: {payment_data}")
+        return await HttpClient.post(f"{self.base_url}create-payment-session", payment_data)
+
+    async def check_payment_status(self, session_id: str) -> Dict:
+        """Check the status of a payment session."""
+        return await HttpClient.get(f"{self.base_url}payment-status/{session_id}")
+
+    def get_payment_page_url(self, session_id: str) -> str:
+        """Get the URL for the Stripe payment page."""
+        return f"{self.base_url}payment-page/{session_id}"
+
+
 class BookingManager:
     """Manager class for booking operations that coordinates between services."""
 
@@ -392,10 +437,96 @@ class BookingManager:
         self.nurse_service = NurseService(service_config)
         self.patient_service = PatientService(service_config)
         self.booking_service = BookingService(service_config)
+        self.stripe_service = StripeService(service_config)
         self.completion_credit_bonus = service_config.COMPLETION_CREDIT_BONUS
+        self.api_key = service_config.API_KEY
+        self.service_config = service_config
+
+
+    async def start_booking_process(self, booking_data: Dict) -> Dict:
+        """Start the booking process by creating a payment session and returning the payment page URL."""
+        # Extract data
+        nurse_id = booking_data.get('NID')
+        patient_id = booking_data.get('PID')
+        amount = booking_data.get('PaymentAmt')
+
+        # Generate a booking ID if not provided
+        if not booking_data.get('BID'):
+            booking_data['BID'] = f"BID-{random.randint(100000, 999999)}"
+
+        booking_id = booking_data.get('BID')
+
+        # Validate required fields
+        required_fields = ['NID', 'PID', 'StartTime', 'EndTime', 'PaymentAmt', 'Notes']
+        for field in required_fields:
+            if not booking_data.get(field):
+                raise ApiError(f'Missing required field: {field}', 400)
+
+        # Success callback URL - where to redirect after successful payment
+        callback_url = f"{request.host_url}v1/payment-callback"
+
+        # Create payment session with Stripe
+        try:
+            payment_session = await self.stripe_service.create_payment_session(
+                amount=amount,
+                booking_id=booking_id,
+                patient_id=patient_id,
+                nurse_id=nurse_id,
+                booking_data=booking_data,
+                success_callback_url=callback_url
+            )
+
+            return {
+                'payment_session_id': payment_session.get('session_id'),
+                'payment_url': payment_session.get('payment_url'),
+                'booking_id': booking_id
+            }
+        except Exception as e:
+            logger.error(f"Error creating payment session: {str(e)}")
+            raise ApiError(f"Failed to create payment session: {str(e)}")
+
+    async def process_successful_payment(self, session_id: str) -> Dict:
+        """Process a successful payment by creating the booking."""
+        try:
+            # Check payment status
+            payment_status = await self.stripe_service.check_payment_status(session_id)
+
+            if not payment_status.get('success') or payment_status.get('payment_status') != 'paid':
+                raise ApiError('Payment verification failed', 400)
+
+            # Get the booking data from the payment session
+            metadata = payment_status.get('metadata', {})
+            booking_data = metadata.get('booking_data', {})
+            if not booking_data:
+                raise ApiError('Booking data not found in payment session', 400)
+
+            # PROPER FUCKIN' DEBUG THIS SHIT
+            logger.info(f"API KEY FROM CONFIG: {self.service_config.API_KEY}")
+
+            # FORCE THE FUCKIN' KEY IN - BELT AND BRACES, YA GET ME?
+            booking_data['APIKey'] = self.service_config.API_KEY
+
+            logger.info(f"BOOKING DATA WITH API KEY: {booking_data}")
+
+            # Create the booking
+            booking_result = await self.create_new_booking(booking_data)
+
+            return {
+                'message': 'Payment successful and booking created',
+                'booking_id': booking_result.get('booking_id'),
+                'payment_session_id': session_id
+            }
+        except Exception as e:
+            logger.error(f"Error processing successful payment: {str(e)}")
+            raise ApiError(f"Failed to process payment: {str(e)}")
 
     async def create_new_booking(self, booking_data: Dict) -> Dict:
         """Create a new booking and handle all related operations."""
+        # FORCE THE FUCKIN' KEY AGAIN - DOUBLE CHECK THIS SHIT
+        booking_data['APIKey'] = self.service_config.API_KEY
+
+        logger.info(f"FINAL BOOKING DATA BEFORE REQUEST: {booking_data}")
+
         # Extract data
         nurse_id = booking_data.get('NID')
         patient_id = booking_data.get('PID')
@@ -403,10 +534,14 @@ class BookingManager:
         end_time = booking_data.get('EndTime')
         notes = booking_data.get('Notes', '')
 
+        # Rest of your code...
+
         # Get nurse and patient details
         nurse = await self.nurse_service.get_nurse(nurse_id)
         patient_data = await self.patient_service.get_patient(patient_id)
         patient = patient_data.get('patient')
+
+        print(booking_data)
 
         # Create the booking
         booking_result = await self.booking_service.create_booking(booking_data)
@@ -633,11 +768,75 @@ booking_manager = BookingManager(service_config)
 scheduler = BackgroundScheduler()
 
 
+# HTML templates for payment success/failure pages
+PAYMENT_SUCCESS_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Successful</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px; background-color: #f0f9ff; }
+        h1 { color: #0f766e; }
+        .message { margin: 20px 0; color: #374151; }
+        .spinner { margin: 20px auto; width: 40px; height: 40px; border: 4px solid #ddd; border-top: 4px solid #0f766e; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <h1>Payment Successful!</h1>
+    <p class="message">Your booking has been created successfully.</p>
+    <p class="message">Booking ID: {{ booking_id }}</p>
+    <div class="spinner"></div>
+    <script>
+        // Close this window after 3 seconds
+        setTimeout(function() {
+            window.opener.postMessage({ 
+                type: 'BOOKING_COMPLETED', 
+                success: true, 
+                bookingId: '{{ booking_id }}' 
+            }, '*');
+            window.close();
+        }, 3000);
+    </script>
+</body>
+</html>
+"""
+
+PAYMENT_FAILURE_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Payment Failed</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px; background-color: #fff1f2; }
+        h1 { color: #be123c; }
+        .message { margin: 20px 0; color: #374151; }
+        .button { display: inline-block; background: #3b82f6; color: white; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Payment Failed</h1>
+    <p class="message">{{ error_message }}</p>
+    <p><a href="javascript:window.close();" class="button">Close Window</a></p>
+    <script>
+        // Notify the opener window
+        window.opener.postMessage({ 
+            type: 'BOOKING_FAILED', 
+            success: false, 
+            error: '{{ error_message }}'
+        }, '*');
+    </script>
+</body>
+</html>
+"""
+
+
 @booking_bp.route('/MakeBooking', methods=['POST'])
 @async_route
 async def make_booking():
     """Endpoint to create a new booking and send notification to nurse."""
     try:
+        # This is now ONLY for creating pre-paid bookings
         data = request.json
         logger.info(f"Received booking request: {data}")
 
@@ -667,6 +866,99 @@ async def make_booking():
         ))
     except Exception as e:
         logger.error(f"Error in make_booking: {str(e)}")
+        return jsonify(api_response(
+            success=False,
+            error='Internal server error',
+            status_code=500
+        ))
+
+
+@booking_bp.route('/InitiateBookingWithPayment', methods=['POST'])
+@async_route
+async def initiate_booking_with_payment():
+    try:
+        data = request.json
+        logger.info(f"Received booking initiation request: {data}")
+
+        # Start the booking process
+        result = await booking_manager.start_booking_process(data)
+
+        # Debug the actual response
+        response_data = {
+            'success': True,
+            'message': "Payment session created successfully",
+            'data': {
+                'payment_url': result.get('payment_url'),
+                'payment_session_id': result.get('payment_session_id'),
+                'booking_id': result.get('booking_id')
+            }
+        }
+        logger.info(f"Sending response: {response_data}")
+
+        return jsonify(response_data)  # Temporarily bypass api_response
+    except ApiError as e:
+        logger.error(f"API Error: {e.message}, {e.status_code}")
+        return jsonify({
+            'success': False,
+            'error': e.message
+        })
+    except Exception as e:
+        logger.error(f"Error in initiate_booking_with_payment: {str(e)}")
+        logger.exception(e)  # Log the full stack trace
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error: ' + str(e)
+        })
+
+
+@booking_bp.route('/payment-callback', methods=['GET'])
+@async_route
+async def payment_callback():
+    """Handle payment callback from Stripe."""
+    session_id = request.args.get('session_id')
+
+    if not session_id:
+        return render_template_string(
+            PAYMENT_FAILURE_TEMPLATE,
+            error_message="Missing session ID"
+        )
+
+    try:
+        # Process the successful payment
+        result = await booking_manager.process_successful_payment(session_id)
+
+        # Render success page with booking ID
+        return render_template_string(
+            PAYMENT_SUCCESS_TEMPLATE,
+            booking_id=result.get('booking_id')
+        )
+    except Exception as e:
+        logger.error(f"Error processing payment callback: {str(e)}")
+        return render_template_string(
+            PAYMENT_FAILURE_TEMPLATE,
+            error_message=str(e)
+        )
+
+
+@booking_bp.route('/CheckPaymentStatus/<session_id>', methods=['GET'])
+@async_route
+async def check_payment_status(session_id):
+    """Endpoint to check a payment status."""
+    try:
+        payment_status = await booking_manager.stripe_service.check_payment_status(session_id)
+
+        return jsonify(api_response(
+            success=True,
+            data={'payment_status': payment_status}
+        ))
+    except ApiError as e:
+        return jsonify(api_response(
+            success=False,
+            error=e.message,
+            status_code=e.status_code
+        ))
+    except Exception as e:
+        logger.error(f"Error checking payment status: {str(e)}")
         return jsonify(api_response(
             success=False,
             error='Internal server error',

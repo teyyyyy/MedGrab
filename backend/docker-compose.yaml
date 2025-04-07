@@ -136,6 +136,8 @@ services:
       context: .
       dockerfile: composite/bookcomp.Dockerfile
     container_name: medgrab_booking_service
+    env_file:
+      - .env
     ports:
       - "5008:5008"
     environment:
