@@ -3,10 +3,9 @@
     <div class="login-container">
       <header class="login-header">
         <div class="logo">
-          <span class="logo-icon">💊</span>
-          <h1>MedGrab</h1>
+          <span class="logo-icon"><img style="height: 100px" src="/MedGrab Logo.png"></span>
         </div>
-        <p class="tagline">Care Arriving.</p>
+        <p class="tagline">Care at your doorstep</p>
       </header>
 
       <form class="login-form" @submit.prevent="login">
