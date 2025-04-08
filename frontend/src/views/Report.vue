@@ -42,7 +42,6 @@
               <CalendarIcon class="mini-icon" /> {{ report.totalBookings || 0 }} bookings
             </span>
           </div>
-          <div class="report-date">Generated: {{ formatDate(report.createdAt) }}</div>
         </div>
       </div>
     </div>
