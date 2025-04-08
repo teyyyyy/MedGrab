@@ -23,13 +23,9 @@ Before you start arsing about with the code, make sure you've got:
 
 ```
 medgrab/
-├── backend/         # Microservices and API gateway
-│   ├── kong/        # Kong API gateway config
-│   ├── nurse_service/ # Nurse management service
-│   ├── booking_service/ # Booking management service
-│   ├── stripe_service/  # Payment processing service
+├── backend/         # Microservices
 │   └── ...
-└── frontend/        # React/Next.js frontend application
+└── frontend/        # Vue frontend application
 ```
 
 ## Getting Started
@@ -132,18 +128,6 @@ STRIPE_PUBLISHABLE_KEY='pk_test_your_key'
 # SendGrid
 SENDGRID_API_KEY='SG.your_key'
 ```
-
-## API Endpoints
-
-### Nurse Service
-- `GET /api/nurses` - List all nurses
-- `GET /api/nurses/:id` - Get nurse details
-- `POST /api/nurses` - Create new nurse profile
-
-### Booking Service
-- `GET /api/bookings` - List bookings
-- `POST /api/bookings` - Create new booking
-- `PUT /api/bookings/:id` - Update booking status
 
 ## Troubleshooting
 
