@@ -188,14 +188,13 @@
                 :enableTimePicker="true"
                 :clearable="false"
                 :min-date="minBookingDate"
-                :min-time="minTimeLimit"
-                :max-time="maxTimeLimit"
-                :disabled-dates="getBookedDates()"
-                :highlight-dates="getBookedDates()"
+                :min-time="currentMinTimeLimit"
+                :max-time="currentMaxTimeLimit"
+                :disabled-dates="isDayDisabled"
                 :day-class="getDayClass"
                 placeholder="Select start time"
                 class="date-picker"
-                @update:modelValue="calculateEndTimeAndPayment"
+                @update:modelValue="updateTimeLimits"
             />
             <div v-if="validationErrors.startTime" class="validation-error">
               {{ validationErrors.startTime }}
@@ -253,7 +252,15 @@
           <div class="nurse-card" v-if="selectedNurse">
             <div class="nurse-details">
               <p class="nurse-name">{{ selectedNurse.name }}</p>
-              <p class="nurse-availability" v-if="selectedNurse.availableTiming">{{ selectedNurse.availableTiming }}</p>
+              <p class="nurse-availability" v-if="selectedNurse.availableTiming">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-1">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="16" y1="2" x2="16" y2="6"></line>
+                  <line x1="8" y1="2" x2="8" y2="6"></line>
+                  <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <span>Available: {{ getAvailableTimeSlots() }}</span>
+              </p>
               <button type="button" class="btn-text" @click="randomNurse">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
@@ -595,6 +602,10 @@ export default {
       minTimeLimit: { hours: 9, minutes: 0 },  // 9:00 AM
       maxTimeLimit: { hours: 23, minutes: 0 }, // 11:00 PM
 
+      // Current time limits (may change based on nurse availability)
+      currentMinTimeLimit: { hours: 9, minutes: 0 },
+      currentMaxTimeLimit: { hours: 22, minutes: 0 },
+
       // New fields for duration-based booking
       durationHours: 1,
       baseRate: 20, // Base rate for 1 hour in dollars
@@ -631,6 +642,259 @@ export default {
     }
   },
   methods: {
+    parseNurseAvailability(availabilityArray) {
+      if (!availabilityArray || !Array.isArray(availabilityArray) || availabilityArray.length === 0) {
+        return {};
+      }
+
+      const availability = {};
+      const dayMapping = {
+        'monday': 1,
+        'tuesday': 2,
+        'wednesday': 3,
+        'thursday': 4,
+        'friday': 5,
+        'saturday': 6,
+        'sunday': 0
+      };
+
+      availabilityArray.forEach(slot => {
+        // Parse string like "Monday 9AM-5PM"
+        const matches = slot.match(/^(\w+)\s+(\d+(?::\d+)?(?:AM|PM))-(\d+(?::\d+)?(?:AM|PM))$/i);
+
+        if (matches) {
+          const day = matches[1].toLowerCase();
+          const startTime = matches[2];
+          const endTime = matches[3];
+
+          if (dayMapping[day] !== undefined) {
+            const dayNumber = dayMapping[day];
+
+            if (!availability[dayNumber]) {
+              availability[dayNumber] = [];
+            }
+
+            availability[dayNumber].push({
+              start: this.convertTimeStringToHours(startTime),
+              end: this.convertTimeStringToHours(endTime)
+            });
+          }
+        }
+      });
+
+      return availability;
+    },
+
+// Convert time string like "9AM" or "5:30PM" to 24-hour format hours
+    convertTimeStringToHours(timeString) {
+      const isPM = timeString.toLowerCase().endsWith('pm');
+      const timeValue = timeString.toLowerCase().replace(/[ap]m$/, '');
+
+      let [hours, minutes = 0] = timeValue.split(':').map(Number);
+
+      // Adjust for PM and 12 AM/PM
+      if (isPM && hours !== 12) {
+        hours += 12;
+      } else if (!isPM && hours === 12) {
+        hours = 0;
+      }
+
+      return {
+        hours,
+        minutes
+      };
+    },
+
+// Check if a specific date is available for the selected nurse
+    isDateAvailable(date) {
+      if (!this.selectedNurse || !this.selectedNurse.availableTiming) {
+        return true; // If no nurse or availability data, assume available
+      }
+
+      // First, check if it meets the minimum booking date requirement
+      const minDate = new Date();
+      minDate.setHours(minDate.getHours() + 24); // 24 hours ahead
+      if (date < minDate) {
+        return false;
+      }
+
+      const nurseAvailability = this.parseNurseAvailability(this.selectedNurse.availableTiming);
+
+      if (Object.keys(nurseAvailability).length === 0) {
+        return true; // If no parsed availability data, assume available
+      }
+
+      const dayOfWeek = date.getDay(); // 0 for Sunday, 1 for Monday, etc.
+
+      // Check if the nurse works on this day
+      return !!nurseAvailability[dayOfWeek];
+    },
+
+// Get the time limits for a specific date based on nurse availability
+    getTimeLimitsForDate(date) {
+      if (!this.selectedNurse || !this.selectedNurse.availableTiming) {
+        return {
+          minTime: this.minTimeLimit,
+          maxTime: this.maxTimeLimit
+        };
+      }
+
+      const nurseAvailability = this.parseNurseAvailability(this.selectedNurse.availableTiming);
+
+      if (Object.keys(nurseAvailability).length === 0) {
+        return {
+          minTime: this.minTimeLimit,
+          maxTime: this.maxTimeLimit
+        };
+      }
+
+      const dayOfWeek = date.getDay();
+      const daySlots = nurseAvailability[dayOfWeek];
+
+      if (!daySlots || daySlots.length === 0) {
+        // No availability on this day, keep the default limits
+        return {
+          minTime: this.minTimeLimit,
+          maxTime: this.maxTimeLimit
+        };
+      }
+
+      // Find the earliest start time and latest end time among all slots for the day
+      let minTime = { hours: 23, minutes: 59 };
+      let maxTime = { hours: 0, minutes: 0 };
+
+      daySlots.forEach(slot => {
+        if (slot.start.hours < minTime.hours ||
+            (slot.start.hours === minTime.hours && slot.start.minutes < minTime.minutes)) {
+          minTime = slot.start;
+        }
+
+        if (slot.end.hours > maxTime.hours ||
+            (slot.end.hours === maxTime.hours && slot.end.minutes > maxTime.minutes)) {
+          maxTime = slot.end;
+        }
+      });
+
+      // Constrain to default limits
+      if (minTime.hours < this.minTimeLimit.hours ||
+          (minTime.hours === this.minTimeLimit.hours && minTime.minutes < this.minTimeLimit.minutes)) {
+        minTime = this.minTimeLimit;
+      }
+
+      if (maxTime.hours > this.maxTimeLimit.hours ||
+          (maxTime.hours === this.maxTimeLimit.hours && maxTime.minutes > this.maxTimeLimit.minutes)) {
+        maxTime = this.maxTimeLimit;
+      }
+
+      return { minTime, maxTime };
+    },
+
+// Check if a specific day is disabled
+    isDayDisabled(date) {
+      // First check if nurse is available
+      const isNurseAvailable = this.isDateAvailable(date);
+
+      if (!isNurseAvailable) {
+        return true; // Day is disabled if nurse isn't available
+      }
+
+      // Then check if there's a pending booking on this date
+      // Only disable if there's a pending booking
+      return this.hasBookingOnDate(date, 'Pending');
+    },
+
+    hasBookingOnDate(date, status) {
+      if (!this.bookings || this.bookings.length === 0) return false;
+
+      const year = date.getFullYear();
+      const month = date.getMonth();
+      const day = date.getDate();
+
+      return this.bookings.some(booking => {
+        // Skip if status doesn't match (if status provided)
+        if (status && booking.fields.Status?.stringValue !== status) {
+          return false;
+        }
+
+        const bookingDate = new Date(booking.fields.StartTime?.timestampValue);
+        return (
+            bookingDate.getFullYear() === year &&
+            bookingDate.getMonth() === month &&
+            bookingDate.getDate() === day
+        );
+      });
+    },
+
+// Update time limits when date changes
+    updateTimeLimits() {
+      if (!this.newBooking.StartTime) return;
+
+      const date = new Date(this.newBooking.StartTime);
+      const limits = this.getTimeLimitsForDate(date);
+
+      // Update time limits
+      this.currentMinTimeLimit = limits.minTime;
+      this.currentMaxTimeLimit = limits.maxTime;
+
+      // Recalculate end time and payment if needed
+      this.calculateEndTimeAndPayment();
+    },
+
+// Get the available time slots for display
+    getAvailableTimeSlots() {
+      if (!this.selectedNurse || !this.selectedNurse.availableTiming) {
+        return 'Available any time 9AM-11PM';
+      }
+
+      return this.selectedNurse.availableTiming.join(', ');
+    },
+
+// Modify the randomNurse method to update time limits
+    randomNurse() {
+      if (this.nurses && this.nurses.length > 0) {
+        var ranNum = Math.floor(Math.random() * this.nurses.length);
+        this.newBooking.NID = this.nurses[ranNum]?.NID;
+        this.selectedNurse = this.nurses[ranNum];
+
+        // Update time limits based on the new nurse's availability
+        this.updateTimeLimits();
+
+        // Show a toast with nurse's availability
+        this.showToast(`Nurse ${this.selectedNurse.name} assigned. Available: ${this.getAvailableTimeSlots()}`, 'info', 5000);
+      }
+    },
+
+// Enhancement for date picker - get day class
+    getDayClass(day) {
+      const date = new Date(day.year, day.month - 1, day.day);
+
+      // Check if the nurse is available on this day
+      const isNurseAvailable = this.isDateAvailable(date);
+
+      if (!isNurseAvailable) {
+        return 'unavailable-date';
+      }
+
+      // Check different booking statuses
+      const hasPendingBooking = this.hasBookingOnDate(date, 'Pending');
+      const hasCompletedBooking = this.hasBookingOnDate(date, 'Completed');
+      const hasAcceptedBooking = this.hasBookingOnDate(date, 'Accepted');
+      const hasCancelledBooking = this.hasBookingOnDate(date, 'Cancelled');
+
+      // Apply classes based on booking status
+      if (hasPendingBooking) {
+        return 'pending-date'; // This will block booking
+      } else if (hasAcceptedBooking) {
+        return 'accepted-date'; // Just for visual indication
+      } else if (hasCompletedBooking) {
+        return 'completed-date'; // Just for visual indication
+      } else if (hasCancelledBooking) {
+        return 'cancelled-date'; // Just for visual indication but still bookable
+      }
+
+      return ''; // Available date
+    },
+
     // PAYMENT FLOW - NEW IMPLEMENTATION
     async createBooking() {
       // Reset any previous payment state
@@ -788,7 +1052,7 @@ export default {
     },
 
     handlePaymentWindowClosed() {
-      // If the window was closed but we haven't received success
+      // If the window was closed, but we haven't received success
       if (!this.paymentSuccess && !this.paymentError) {
         clearInterval(this.windowCheckInterval);
 
@@ -1301,54 +1565,93 @@ export default {
           });
     },
 
-    mounted() {
-      // Show time restriction info after component is mounted
-      this.$nextTick(() => {
-        this.showTimeRestrictionInfo();
-      });
-    },
-
-    randomNurse() {
-      if (this.nurses && this.nurses.length > 0) {
-        var ranNum = Math.floor(Math.random() * this.nurses.length);
-        this.newBooking.NID = this.nurses[ranNum]?.NID;
-        this.selectedNurse = this.nurses[ranNum];
-      }
-    },
-
     getBookedDates() {
       if (!this.bookings || this.bookings.length === 0) return [];
 
-      // This'll be a fackin' array of all yer booked dates, ya get me?
-      return this.bookings.map(booking => {
-        const startTime = new Date(booking.fields.StartTime?.timestampValue);
-        return new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate());
-      });
+      // Filter out cancelled bookings, only return pending, accepted, or completed
+      return this.bookings
+          .filter(booking =>
+              booking.fields.Status?.stringValue !== 'Cancelled' &&
+              booking.fields.Status?.stringValue === 'Pending' // Only block pending bookings
+          )
+          .map(booking => {
+            const startTime = new Date(booking.fields.StartTime?.timestampValue);
+            return new Date(startTime.getFullYear(), startTime.getMonth(), startTime.getDate());
+          });
     },
 
-    getDayClass(day) {
-      // Check if the day 'as a fackin' booking on it
-      const date = new Date(day.year, day.month - 1, day.day);
-      const isBooked = this.getBookedDates().some(bookedDate =>
-          bookedDate.getFullYear() === date.getFullYear() &&
-          bookedDate.getMonth() === date.getMonth() &&
-          bookedDate.getDate() === date.getDate()
-      );
+    findNextAvailableDateForNurse() {
+      // Start with tomorrow
+      let candidateDate = new Date();
+      candidateDate.setDate(candidateDate.getDate() + 1);
+      candidateDate.setHours(9, 0, 0, 0); // 9 AM
 
-      // Return yer custom CSS class if it's booked
-      return isBooked ? 'booked-date' : '';
+      const MAX_DAYS_TO_CHECK = 30;
+
+      // Loop through the next 30 days
+      for (let i = 0; i < MAX_DAYS_TO_CHECK; i++) {
+        // Check if this day is available for the nurse
+        const isNurseAvailable = this.isDateAvailable(candidateDate);
+
+        // Check if there's a pending booking on this date
+        const hasPendingBooking = this.hasBookingOnDate(candidateDate, 'Pending');
+
+        // Only use days where nurse is available AND there's no pending booking
+        if (isNurseAvailable && !hasPendingBooking) {
+          // Set this as the start time
+          this.newBooking.StartTime = new Date(candidateDate);
+
+          // Show notification to user
+          this.showToast(`Found next available date: ${this.formatDate(candidateDate)}`, 'info');
+
+          return;
+        }
+
+        // Move to the next day
+        candidateDate.setDate(candidateDate.getDate() + 1);
+      }
+
+      // If no available day found, keep the current date
+      this.showToast("No available dates found in the next 30 days. Try another nurse.", "error");
     }
   },
+
+  mounted() {
+    // Show time restriction info after component is mounted
+    this.$nextTick(() => {
+      this.showTimeRestrictionInfo();
+    });
+  },
+
   watch: {
     'newBooking.StartTime': function(newTime) {
       if (newTime) {
-        this.calculateEndTimeAndPayment();
+        this.updateTimeLimits(); // Use our new method
+      }
+    },
+    'selectedNurse': function(newNurse) {
+      if (newNurse) {
+        // When nurse changes, update time limits
+        this.updateTimeLimits();
+
+        // If the current date is not available with the new nurse, find next available
+        if (this.newBooking.StartTime) {
+          const currentDate = new Date(this.newBooking.StartTime);
+          if (!this.isDateAvailable(currentDate)) {
+            // Find the next available date for this nurse
+            this.findNextAvailableDateForNurse();
+          }
+        }
       }
     }
   },
   created() {
     // Initialize with calculated price
     this.calculatedPrice = this.baseRate;
+
+    // Set initial time limits
+    this.currentMinTimeLimit = this.minTimeLimit;
+    this.currentMaxTimeLimit = this.maxTimeLimit;
 
     // Existing initialization code
     this.getCurrentPatient();
@@ -2945,5 +3248,492 @@ tr:hover {
     width: 2px;
     margin: 4px 0;
   }
+}
+
+/* Styles for unavailable dates */
+.unavailable-date {
+  background-color: #f1f5f9 !important; /* Light gray background */
+  color: #94a3b8 !important; /* Gray text */
+  text-decoration: line-through !important;
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+  pointer-events: none !important; /* Prevent interaction */
+}
+
+/* Enhancement to highlight current day when available */
+.dp__today.dp__cell_offset:not(.booked-date):not(.unavailable-date) {
+  border: 2px solid var(--primary) !important;
+}
+
+/* Enhanced nurse availability display */
+.nurse-availability {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background-color: var(--primary-light);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--primary);
+  margin-bottom: 10px !important;
+  border-left: 3px solid var(--primary);
+}
+
+/* Enhance the time picker visualization */
+.date-picker .dp__time_picker {
+  border-top: 1px dashed var(--neutral-300);
+  padding-top: 12px;
+}
+
+/* Better visualization for disabled time options */
+.dp__time_picker .dp__time_col_disabled {
+  opacity: 0.3;
+  position: relative;
+}
+
+.dp__time_picker .dp__time_col_disabled:after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+      45deg,
+      rgba(0,0,0,0.05),
+      rgba(0,0,0,0.05) 5px,
+      transparent 5px,
+      transparent 10px
+  );
+  pointer-events: none;
+}
+
+/* Show a tooltip-like message when hovering unavailable dates */
+.unavailable-date:after {
+  content: 'Nurse unavailable';
+  position: absolute;
+  bottom: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--neutral-800);
+  color: white;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 100;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.unavailable-date:hover:after {
+  opacity: 1;
+  visibility: visible;
+}
+.unavailable-date {
+  background-color: #f1f5f9 !important; /* Light gray background */
+  color: #94a3b8 !important; /* Gray text */
+  text-decoration: line-through !important;
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+  pointer-events: none !important; /* Prevent interaction */
+}
+
+/* Style for date with pending bookings */
+.pending-date {
+  background-color: #fef2f2 !important; /* Light red background */
+  color: #b91c1c !important; /* Red text */
+  cursor: not-allowed !important;
+  opacity: 0.8 !important;
+  pointer-events: none !important; /* Prevent interaction */
+  position: relative;
+}
+
+.pending-date::after {
+  content: "🔒";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+}
+
+/* Style for date with accepted bookings - for visual indication only */
+.accepted-date {
+  background-color: #ecfdf5 !important; /* Light green background */
+  color: #065f46 !important; /* Green text */
+  position: relative;
+}
+
+.accepted-date::after {
+  content: "✓";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+  color: #065f46;
+}
+
+/* Style for date with completed bookings - for visual indication only */
+.completed-date {
+  background-color: #eff6ff !important; /* Light blue background */
+  color: #1e40af !important; /* Blue text */
+  position: relative;
+}
+
+.completed-date::after {
+  content: "✅";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+}
+
+/* Style for date with cancelled bookings - visual only, still bookable */
+.cancelled-date {
+  background-color: #faf5ff !important; /* Light purple */
+  color: #6b21a8 !important; /* Purple text */
+  position: relative;
+}
+
+.cancelled-date::after {
+  content: "↺";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 10px;
+  color: #6b21a8;
+}
+
+/* Enhancement to highlight current day when available */
+.dp__today.dp__cell_offset:not(.pending-date):not(.unavailable-date) {
+  border: 2px solid var(--primary) !important;
+}
+
+/* Enhanced nurse availability display */
+.nurse-availability {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background-color: var(--primary-light);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--primary);
+  margin-bottom: 10px !important;
+  border-left: 3px solid var(--primary);
+}
+
+/* Enhance the time picker visualization */
+.date-picker .dp__time_picker {
+  border-top: 1px dashed var(--neutral-300);
+  padding-top: 12px;
+}
+
+/* Better visualization for disabled time options */
+.dp__time_picker .dp__time_col_disabled {
+  opacity: 0.3;
+  position: relative;
+}
+
+.dp__time_picker .dp__time_col_disabled:after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+      45deg,
+      rgba(0,0,0,0.05),
+      rgba(0,0,0,0.05) 5px,
+      transparent 5px,
+      transparent 10px
+  );
+  pointer-events: none;
+}
+
+/* Tooltip styles for different date states */
+.unavailable-date:after,
+.pending-date:after,
+.accepted-date:after,
+.completed-date:after,
+.cancelled-date:after {
+  position: absolute;
+  bottom: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--neutral-800);
+  color: white;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 100;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.unavailable-date:after {
+  content: 'Nurse unavailable';
+}
+
+.pending-date:after {
+  content: 'Booking pending';
+}
+
+.accepted-date:after {
+  content: 'Booking accepted';
+}
+
+.completed-date:after {
+  content: 'Booking completed';
+}
+
+.cancelled-date:after {
+  content: 'Booking cancelled - Available';
+}
+
+.unavailable-date:hover:after,
+.pending-date:hover:after,
+.accepted-date:hover:after,
+.completed-date:hover:after,
+.cancelled-date:hover:after {
+  opacity: 1;
+  visibility: visible;
+}
+
+.unavailable-date {
+  background-color: #f1f5f9 !important; /* Light gray background */
+  color: #94a3b8 !important; /* Gray text */
+  text-decoration: line-through !important;
+  cursor: not-allowed !important;
+  opacity: 0.6 !important;
+  pointer-events: none !important; /* Prevent interaction */
+}
+
+/* Style for date with pending bookings */
+.pending-date {
+  background-color: #fef2f2 !important; /* Light red background */
+  color: #b91c1c !important; /* Red text */
+  cursor: not-allowed !important;
+  opacity: 0.8 !important;
+  pointer-events: none !important; /* Prevent interaction */
+  position: relative;
+}
+
+.pending-date::after {
+  content: "🔒";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+}
+
+/* Style for date with accepted bookings - for visual indication only */
+.accepted-date {
+  background-color: #ecfdf5 !important; /* Light green background */
+  color: #065f46 !important; /* Green text */
+  position: relative;
+}
+
+.accepted-date::after {
+  content: "✓";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+  color: #065f46;
+}
+
+/* Style for date with completed bookings - for visual indication only */
+.completed-date {
+  background-color: #eff6ff !important; /* Light blue background */
+  color: #1e40af !important; /* Blue text */
+  position: relative;
+}
+
+.completed-date::after {
+  content: "✅";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 8px;
+}
+
+/* Style for date with cancelled bookings - visual only, still bookable */
+.cancelled-date {
+  background-color: #faf5ff !important; /* Light purple */
+  color: #6b21a8 !important; /* Purple text */
+  position: relative;
+}
+
+.cancelled-date::after {
+  content: "↺";
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 10px;
+  color: #6b21a8;
+}
+
+/* Enhancement to highlight current day when available */
+.dp__today.dp__cell_offset:not(.pending-date):not(.unavailable-date) {
+  border: 2px solid var(--primary) !important;
+}
+
+/* Enhanced nurse availability display */
+.nurse-availability {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background-color: var(--primary-light);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--primary);
+  margin-bottom: 10px !important;
+  border-left: 3px solid var(--primary);
+}
+
+/* Enhance the time picker visualization */
+.date-picker .dp__time_picker {
+  border-top: 1px dashed var(--neutral-300);
+  padding-top: 12px;
+}
+
+/* Better visualization for disabled time options */
+.dp__time_picker .dp__time_col_disabled {
+  opacity: 0.3;
+  position: relative;
+}
+
+.dp__time_picker .dp__time_col_disabled:after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+      45deg,
+      rgba(0,0,0,0.05),
+      rgba(0,0,0,0.05) 5px,
+      transparent 5px,
+      transparent 10px
+  );
+  pointer-events: none;
+}
+
+/* Tooltip styles for different date states */
+.unavailable-date:after,
+.pending-date:after,
+.accepted-date:after,
+.completed-date:after,
+.cancelled-date:after {
+  position: absolute;
+  bottom: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--neutral-800);
+  color: white;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+  z-index: 100;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.unavailable-date:after {
+  content: 'Nurse unavailable';
+}
+
+.pending-date:after {
+  content: 'Booking pending';
+}
+
+.accepted-date:after {
+  content: 'Booking accepted';
+}
+
+.completed-date:after {
+  content: 'Booking completed';
+}
+
+.cancelled-date:after {
+  content: 'Booking cancelled - Available';
+}
+
+.unavailable-date:hover:after,
+.pending-date:hover:after,
+.accepted-date:hover:after,
+.completed-date:hover:after,
+.cancelled-date:hover:after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Calendar Legend Styles */
+.calendar-legend {
+  margin-top: 16px;
+  padding: 12px;
+  background-color: var(--neutral-100);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.legend-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--neutral-700);
+}
+
+.legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--neutral-300);
+}
+
+.legend-label {
+  color: var(--neutral-700);
+  font-size: 12px;
+}
+
+.unavailable-color {
+  background-color: #f1f5f9;
+  text-decoration: line-through;
+}
+
+.pending-color {
+  background-color: #fef2f2;
+}
+
+.accepted-color {
+  background-color: #ecfdf5;
+}
+
+.completed-color {
+  background-color: #eff6ff;
+}
+
+.cancelled-color {
+  background-color: #faf5ff;
 }
 </style>

@@ -124,7 +124,7 @@
           <tr v-for="(booking, index) in filteredBookings" :key="index">
             <!-- Patient -->
             <td>
-              <div class="patient-info" @click="viewPatientInfo(booking.fields.PID?.stringValue)">
+              <div class="patient-info" @click="viewPatientProfile(booking.fields.PID?.stringValue)">
                 <div class="patient-avatar">{{ getPatientInitials(booking.fields.PID?.stringValue) }}</div>
                 <div class="patient-details">
                   <p class="patient-name">{{ getPatientName(booking.fields.PID?.stringValue) }}</p>
@@ -350,6 +350,103 @@
       </div>
     </div>
 
+    <!-- Patient Profile Modal -->
+    <div v-if="showPatientProfile" class="modal-overlay" @click="closePatientProfile">
+      <div class="modal-content patient-profile-modal" @click.stop>
+        <div class="modal-header">
+          <h3>Patient Profile</h3>
+          <button class="btn-close" @click="closePatientProfile">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body" v-if="selectedPatient">
+          <div class="detail-group">
+            <h4>Personal Information</h4>
+            <div class="patient-card">
+              <div class="patient-avatar patient-avatar-large">
+                {{ getPatientInitials(selectedPatient.PID) }}
+              </div>
+              <div class="patient-details">
+                <p class="patient-name">{{ selectedPatient.Name }}</p>
+                <p class="patient-contact" v-if="selectedPatient.PhoneNum">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                  </svg>
+                  {{ selectedPatient.PhoneNum }}
+                </p>
+                <p class="patient-contact" v-if="selectedPatient.Email">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path>
+                    <polyline points="22,6 12,13 2,6"></polyline>
+                  </svg>
+                  {{ selectedPatient.Email }}
+                </p>
+                <p class="patient-location" v-if="selectedPatient.Location">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                    <circle cx="12" cy="10" r="3"></circle>
+                  </svg>
+                  {{ selectedPatient.Location }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-group">
+            <h4>Medical Record</h4>
+            <div class="medical-record-box" v-if="selectedPatient.MedicalRecord">
+              {{ selectedPatient.MedicalRecord }}
+            </div>
+            <p v-else class="empty-record">No medical record available</p>
+          </div>
+
+          <div class="detail-group">
+            <h4>Appointment History</h4>
+            <div class="appointments-list">
+              <div v-if="getPatientBookings(selectedPatient.PID).length === 0" class="empty-appointments">
+                <p>No appointment history</p>
+              </div>
+              <div v-else class="appointment-item" v-for="(booking, index) in getPatientBookings(selectedPatient.PID)" :key="index">
+                <div class="appointment-header">
+                  <span :class="['status-badge', getStatusClass(booking.fields.Status?.stringValue)]">
+                    {{ booking.fields.Status?.stringValue }}
+                  </span>
+                  <span class="appointment-date">{{ formatDate(booking.fields.StartTime?.timestampValue) }}</span>
+                </div>
+                <div class="appointment-details">
+                  <div class="appointment-time">
+                    {{ formatTime(booking.fields.StartTime?.timestampValue) }} -
+                    {{ formatTime(booking.fields.EndTime?.timestampValue) }}
+                  </div>
+                  <div class="appointment-duration">
+                    {{ calculateDuration(booking.fields.StartTime?.timestampValue, booking.fields.EndTime?.timestampValue) }}
+                  </div>
+                  <div class="appointment-payment">
+                    Payment: ${{ booking.fields.PaymentAmt?.doubleValue }}
+                  </div>
+                </div>
+                <div class="appointment-notes" v-if="booking.fields.Notes?.stringValue">
+                  <strong>Notes:</strong> {{ booking.fields.Notes?.stringValue }}
+                </div>
+                <button class="btn-details" @click="viewBookingDetails(booking)">
+                  View Details
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn-submit" @click="closePatientProfile">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showCancellationModal" class="modal-overlay" @click="closeCancellationModal">
       <div class="modal-content" @click.stop>
         <div class="modal-header">
@@ -442,6 +539,10 @@ export default {
       searchQuery: '',
       showBookingDetails: false,
       selectedBooking: null,
+
+      // Patient profile modal
+      showPatientProfile: false,
+      selectedPatient: null,
 
       // Processing state tracking
       processingActions: {}, // Keys are booking IDs, values are boolean (true = processing)
@@ -617,11 +718,31 @@ export default {
       this.showBookingDetails = true;
     },
 
-    viewPatientInfo(patientId) {
-      const booking = this.bookings.find(b => b.fields.PID?.stringValue === patientId);
-      if (booking) {
-        this.viewBookingDetails(booking);
+    // New method to view patient profile
+    viewPatientProfile(patientId) {
+      const patient = this.patients.find(p => p.PID === patientId);
+      if (patient) {
+        this.selectedPatient = patient;
+        this.showPatientProfile = true;
+      } else {
+        this.showActionMessage("Can't find that patient, mate! Data's gone walkabout!", false);
       }
+    },
+
+    // Method to get patient's bookings
+    getPatientBookings(patientId) {
+      return this.bookings.filter(booking => booking.fields.PID?.stringValue === patientId);
+    },
+
+    // New method to close patient profile modal
+    closePatientProfile() {
+      this.showPatientProfile = false;
+      this.selectedPatient = null;
+    },
+
+    // Updated viewPatientInfo - now calls viewPatientProfile
+    viewPatientInfo(patientId) {
+      this.viewPatientProfile(patientId);
     },
 
     closeModal() {
@@ -1491,6 +1612,10 @@ tr:hover {
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
 }
 
+.patient-profile-modal {
+  max-width: 700px;
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -1602,6 +1727,60 @@ tr:hover {
   padding: 12px 16px;
   border-radius: 4px;
   margin: 0;
+}
+
+/* Patient profile specific styles */
+.medical-record-box {
+  background-color: var(--neutral-100);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 15px;
+  line-height: 1.5;
+  border: 1px solid var(--neutral-300);
+}
+
+.empty-record, .empty-appointments {
+  color: var(--neutral-500);
+  text-align: center;
+  padding: 12px;
+  background-color: var(--neutral-100);
+  border-radius: 6px;
+}
+
+.appointments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.appointment-item {
+  padding: 16px;
+  background-color: var(--neutral-100);
+  border-radius: 8px;
+  border: 1px solid var(--neutral-200);
+}
+
+.appointment-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.appointment-date {
+  font-weight: 500;
+}
+
+.appointment-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.appointment-notes {
+  margin-bottom: 12px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 /* Toast Message */

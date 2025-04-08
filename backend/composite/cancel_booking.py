@@ -602,7 +602,8 @@ def format_datetime(date_str):
         # Parse the ISO bollocks
         dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         # Convert to Singapore time (UTC+8)
-        dt = dt.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+        dt = dt.astimezone(timezone(timedelta(hours=8)))
+
         # Format it nice and proper
         return f"{dt.strftime('%d %B %Y')} at {dt.strftime('%H:%M')}"
     except (ValueError, TypeError):

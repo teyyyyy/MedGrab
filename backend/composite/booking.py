@@ -192,7 +192,6 @@ class NotificationService:
     """Service for creating and sending notifications."""
 
     @staticmethod
-    @staticmethod
     def create_nurse_booking_notification(nurse_name: str, start_time: str, end_time: str,
                                           location: str, notes: str) -> str:
         """Create HTML notification for a new booking to send to a nurse."""
@@ -1043,9 +1042,10 @@ def format_datetime(date_str):
         return "N/A"
     try:
         # Parse the ISO bollocks
-        dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         # Convert to Singapore time (UTC+8)
-        dt = dt.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+        dt = dt.astimezone(timezone(timedelta(hours=8)))
+
         # Format it nice and proper
         return f"{dt.strftime('%d %B %Y')} at {dt.strftime('%H:%M')}"
     except (ValueError, TypeError):
