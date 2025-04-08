@@ -473,6 +473,8 @@ async def send_notification_to_nurse(nurse_data, booking_id, credit_deduction):
 
 async def send_notification_to_new_nurse(nurse_data, booking_id, patient_name, start_time, end_time, location, notes):
     """Send notification to new nurse about the assignment"""
+    formatted_start = format_datetime(start_time)
+    formatted_end = format_datetime(end_time)
     nurse_email = nurse_data.get('email')
     if not nurse_email:
         print("No email found for new nurse")
@@ -490,8 +492,8 @@ async def send_notification_to_new_nurse(nurse_data, booking_id, patient_name, s
         <ul>
             <li><strong>Booking ID:</strong> {booking_id}</li>
             <li><strong>Patient:</strong> {patient_name}</li>
-            <li><strong>Start time:</strong> {start_time}</li>
-            <li><strong>End time:</strong> {end_time}</li>
+            <li><strong>Start time:</strong> {formatted_start}</li>
+            <li><strong>End time:</strong> {formatted_end}</li>
             <li><strong>Location:</strong> {location}</li>
             <li><strong>Notes:</strong> {notes}</li>
         </ul>
@@ -591,6 +593,21 @@ async def nurse_cancel_endpoint():
     finally:
         # Close AMQP connection
         await close_amqp()
+
+def format_datetime(date_str):
+    """Turn that fuckin' ISO string into somethin' people can actually read"""
+    if not date_str:
+        return "N/A"
+    try:
+        # Parse the ISO bollocks
+        dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        # Convert to Singapore time (UTC+8)
+        dt = dt.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+        # Format it nice and proper
+        return f"{dt.strftime('%d %B %Y')} at {dt.strftime('%H:%M')}"
+    except (ValueError, TypeError):
+        return date_str
+
 
 
 # Initialize the blueprint

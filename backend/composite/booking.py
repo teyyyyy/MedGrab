@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from functools import wraps
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timezone, timedelta
+
 
 # Configure logging
 logging.basicConfig(
@@ -190,9 +192,12 @@ class NotificationService:
     """Service for creating and sending notifications."""
 
     @staticmethod
+    @staticmethod
     def create_nurse_booking_notification(nurse_name: str, start_time: str, end_time: str,
-                                         location: str, notes: str) -> str:
+                                          location: str, notes: str) -> str:
         """Create HTML notification for a new booking to send to a nurse."""
+        formatted_start = format_datetime(start_time)
+        formatted_end = format_datetime(end_time)
         return f"""
         <html>
         <body>
@@ -201,8 +206,8 @@ class NotificationService:
             <hr>
             <h3>Summary:</h3>
             <ul>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Start time:</strong> {formatted_start}</li>
+                <li><strong>End time:</strong> {formatted_end}</li>
                 <li><strong>Location:</strong> {location}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
@@ -217,6 +222,8 @@ class NotificationService:
     def create_patient_booking_notification(patient_name: str, start_time: str, end_time: str,
                                           nurse_name: str, notes: str) -> str:
         """Create HTML notification for a new booking to send to a patient."""
+        formatted_start = format_datetime(start_time)
+        formatted_end = format_datetime(end_time)
         return f"""
         <html>
         <body>
@@ -226,8 +233,8 @@ class NotificationService:
             <h3>Booking Details:</h3>
             <ul>
                 <li><strong>Nurse:</strong> {nurse_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Start time:</strong> {formatted_start}</li>
+                <li><strong>End time:</strong> {formatted_end}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
 
@@ -240,6 +247,8 @@ class NotificationService:
     def create_nurse_booking_completed_notification(nurse_name: str, patient_name: str,
                                                   start_time: str, end_time: str,
                                                   location: str, notes: str, credit_bonus: int) -> str:
+        formatted_start = format_datetime(start_time)
+        formatted_end = format_datetime(end_time)
         """Create HTML notification for a completed booking to send to the nurse."""
         return f"""
         <html>
@@ -250,8 +259,8 @@ class NotificationService:
             <h3>Completed Booking Details:</h3>
             <ul>
                 <li><strong>Patient:</strong> {patient_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Start time:</strong> {formatted_start}</li>
+                <li><strong>End time:</strong> {formatted_end}</li>
                 <li><strong>Location:</strong> {location}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
@@ -265,6 +274,8 @@ class NotificationService:
     @staticmethod
     def create_patient_booking_completed_notification(patient_name: str, nurse_name: str,
                                                     start_time: str, end_time: str, notes: str) -> str:
+        formatted_start = format_datetime(start_time)
+        formatted_end = format_datetime(end_time)
         """Create HTML notification for a completed booking to send to the patient."""
         return f"""
         <html>
@@ -275,8 +286,8 @@ class NotificationService:
             <h3>Completed Booking Details:</h3>
             <ul>
                 <li><strong>Nurse:</strong> {nurse_name}</li>
-                <li><strong>Start time:</strong> {start_time}</li>
-                <li><strong>End time:</strong> {end_time}</li>
+                <li><strong>Start time:</strong> {formatted_start}</li>
+                <li><strong>End time:</strong> {formatted_end}</li>
                 <li><strong>Notes:</strong> {notes}</li>
             </ul>
             <p>We hope your experience was satisfactory. If you have a moment, please consider leaving feedback on our app.</p>
@@ -1025,6 +1036,20 @@ async def complete_booking(booking_id: str):
 # Function to run the scheduler task
 def run_check_completed_bookings():
     asyncio.run(booking_manager.check_completed_bookings())
+
+def format_datetime(date_str):
+    """Turn that fuckin' ISO string into somethin' people can actually read"""
+    if not date_str:
+        return "N/A"
+    try:
+        # Parse the ISO bollocks
+        dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        # Convert to Singapore time (UTC+8)
+        dt = dt.astimezone(datetime.timezone(datetime.timedelta(hours=8)))
+        # Format it nice and proper
+        return f"{dt.strftime('%d %B %Y')} at {dt.strftime('%H:%M')}"
+    except (ValueError, TypeError):
+        return date_str
 
 
 # Register blueprint
