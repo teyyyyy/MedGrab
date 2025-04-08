@@ -195,9 +195,9 @@ export default {
       // Add a small delay for user to see success message
       setTimeout(() => {
         if (role === 'nurse') {
-          router.push('/report')
+          window.location.href = '/report'
         } else {
-          router.push('/bookingcreator')
+          window.location.href = '/bookingcreator'
         }
       }, 1000)
     }
