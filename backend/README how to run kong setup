@@ -1,5 +1,0 @@
-1. Right-click the empty space in the folder where the script is, select "Git Bash Here"
-3. Run: chmod +x kong-setup.sh
-4. Run: ./kong-setup.sh
-
-Or just run the bat file
