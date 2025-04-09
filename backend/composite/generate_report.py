@@ -328,6 +328,11 @@ async def _generate_monthly_report(nid, month):
     total_bookings = len(bookings)
     cancellation_rate = (float(cancelled_bookings) / float(total_bookings) * 100) if total_bookings > 0 else 0.0
     
+    # Get suspension details
+    is_suspended = nurse_data.get('isSuspended', False)
+    is_warned = nurse_data.get('isWarned', False)
+    suspension_end_date = format_date(nurse_data.get('suspensionEndDate')) if is_suspended else None
+    
     report_content = generate_report_content(nid, month, bookings, hours_worked, nurse_data)
     store_result = store_report(nid, month, report_content, hours_worked, total_bookings)
     
@@ -351,6 +356,17 @@ async def _generate_monthly_report(nid, month):
             
             {'<p style="color:red;"><strong>⚠️ High Workload Warning:</strong> You have worked over 60 hours this month. Please take care of your well-being.</p>' if hours_worked > 60 else ''}
             {'<p style="color:red;"><strong>⚠️ High Cancellation Rate:</strong> Your cancellation rate exceeds 30%. This affects your reliability score.</p>' if cancellation_rate > 30 else ''}
+            
+            {f'<div style="color:red; border: 1px solid red; padding: 10px; margin: 10px 0;">'
+             '<h3>🚫 Account Suspension Notice</h3>'
+             f'<p>Your account has been suspended until {suspension_end_date} due to low credit score.</p>'
+             '<p>During this suspension period, you will not be shown in the nurse pool for new bookings.</p>'
+             '</div>' if is_suspended else ''}
+            
+            {'<div style="color:orange; border: 1px solid orange; padding: 10px; margin: 10px 0;">'
+             '<h3>⚠️ Warning Notice</h3>'
+             '<p>Your credit score is low. Please be careful about cancellations to avoid suspension.</p>'
+             '</div>' if is_warned and not is_suspended else ''}
             
             <p>Please find the detailed report attached as a PDF.</p>
             <p>Thank you for your service.</p>
@@ -380,7 +396,10 @@ async def _generate_monthly_report(nid, month):
         "hours": float(hours_worked),
         "earnings": float(total_earned),
         "totalBookings": int(total_bookings),
-        "cancellationRate": float(cancellation_rate)
+        "cancellationRate": float(cancellation_rate),
+        "isWarned": is_warned,
+        "isSuspended": is_suspended,
+        "suspensionEndDate": suspension_end_date
     }
 
 # GraphQL Schema
