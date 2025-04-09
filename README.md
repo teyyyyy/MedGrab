@@ -2,7 +2,7 @@
 
 MedGrab is a fullstack application for booking medical professionals, connecting patients with nurses through a streamlined digital platform.
 
-## What's This Bloody Thing Do?
+## What Does This Do?
 
 - Patients can book appointments with available nurses
 - Nurses can manage their schedules and view bookings
