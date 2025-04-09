@@ -15,7 +15,6 @@ MedGrab is a fullstack application for booking medical professionals, connecting
 Before you start arsing about with the code, make sure you've got:
 
 - Docker and Docker Compose
-- Node.js (v16 or higher)
 - npm or yarn
 - Git
 

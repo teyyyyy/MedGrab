@@ -692,13 +692,13 @@ class BookingManager:
             pending_bookings = await self.booking_service.get_all_pending_bookings()
 
             # Get current time
-            current_time = datetime.now()
+            current_time = datetime.now(timezone.utc)
             completed_count = 0
 
             for booking in pending_bookings:
                 # Extract booking data
-                booking_id = booking.get('id')
                 fields = booking.get('fields', {})
+                booking_id = fields.get('BID', {}).get('stringValue')
 
                 # Extract necessary fields
                 nurse_id = fields.get('NID', {}).get('stringValue')
@@ -1014,8 +1014,7 @@ async def complete_booking(booking_id: str):
 
         return jsonify(api_response(
             success=True,
-            message=f'Successfully completed booking {booking_id}',
-            **result
+            message=f'Successfully completed booking {booking_id}'
         ))
     except ApiError as e:
         return jsonify(api_response(
